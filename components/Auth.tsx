@@ -1,16 +1,20 @@
 import React, { useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { Loader2, AlertCircle, Hexagon } from 'lucide-react';
+import { Loader2, AlertCircle, Hexagon, X } from 'lucide-react';
 
 interface AuthProps {
+  isOpen: boolean;
+  onClose: () => void;
   onLogin: (user: any) => void;
 }
 
-export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
+export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  if (!isOpen) return null;
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,6 +26,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
       setTimeout(() => {
         onLogin({ id: 'demo-user', email: email || 'demo@spin-net.com' });
         setLoading(false);
+        onClose();
       }, 800);
       return;
     }
@@ -30,7 +35,10 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         if (!supabase) throw new Error("Supabase client not initialized");
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        if (data.user) onLogin(data.user);
+        if (data.user) {
+            onLogin(data.user);
+            onClose();
+        }
     } catch (err: any) {
         setError(err.message || 'Authentication failed.');
     } finally {
@@ -39,28 +47,34 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-900 p-4">
-      <div className="max-w-md w-full bg-white rounded-none shadow-2xl overflow-hidden border-t-4 border-[#FFC600]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
+      <div className="max-w-md w-full bg-white rounded-none shadow-2xl overflow-hidden border-t-4 border-[#FFC600] relative animate-in fade-in zoom-in duration-200">
         
+        <button 
+            onClick={onClose}
+            className="absolute top-2 right-2 text-slate-400 hover:text-black p-2"
+        >
+            <X className="w-6 h-6" />
+        </button>
+
         {/* Header */}
-        <div className="bg-black p-10 text-center relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-[#FFC600]"></div>
-          <div className="mx-auto bg-[#FFC600] w-16 h-16 flex items-center justify-center mb-4 transform rotate-45">
-            <Hexagon className="text-black w-10 h-10 -rotate-45 fill-current" />
+        <div className="bg-black p-8 text-center relative overflow-hidden">
+          <div className="mx-auto bg-[#FFC600] w-12 h-12 flex items-center justify-center mb-3 transform rotate-45">
+            <Hexagon className="text-black w-8 h-8 -rotate-45 fill-current" />
           </div>
-          <h2 className="text-4xl font-black text-white tracking-tighter">SPIN</h2>
-          <p className="text-[#FFC600] mt-2 text-sm font-bold tracking-widest uppercase">Supply Insulin Pen Network</p>
+          <h2 className="text-3xl font-black text-white tracking-tighter">SPIN ACCESS</h2>
+          <p className="text-[#FFC600] mt-2 text-xs font-bold tracking-widest uppercase">Authorized Personnel Only</p>
         </div>
 
         <div className="p-8">
             {!isSupabaseConfigured() && (
                 <div className="mb-6 bg-yellow-50 border border-yellow-200 p-3 flex items-start gap-3 text-yellow-800 text-sm">
                     <AlertCircle className="w-5 h-5 shrink-0" />
-                    <p><strong>Demo Mode:</strong> Database not connected. Using local browser storage.</p>
+                    <p><strong>Demo Mode:</strong> Database not connected.</p>
                 </div>
             )}
 
-          <form onSubmit={handleAuth} className="space-y-6">
+          <form onSubmit={handleAuth} className="space-y-5">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">User Email</label>
               <input
@@ -86,7 +100,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
             </div>
 
             {error && (
-              <div className="text-red-600 text-sm bg-red-50 p-3 border-l-4 border-red-600">
+              <div className="text-red-600 text-xs bg-red-50 p-3 border-l-4 border-red-600 font-bold">
                 {error}
               </div>
             )}
@@ -99,15 +113,10 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
-                'Access Network'
+                'Login to Dashboard'
               )}
             </button>
           </form>
-          
-          <div className="mt-8 text-center">
-            <p className="text-xs text-slate-400">Restricted Access System</p>
-            <p className="text-[10px] text-slate-300 mt-1">© 2025 Supply Insulin Pen Network</p>
-          </div>
         </div>
       </div>
     </div>
