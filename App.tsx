@@ -20,7 +20,12 @@ import {
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
-import metadata from './metadata.json';
+
+// Defined locally to avoid JSON module import issues in browser environments
+const METADATA = {
+  name: "SPIN v1.0.0",
+  version: "1.0.0"
+};
 
 type Tab = 'dashboard' | 'deliver' | 'history';
 
@@ -441,7 +446,7 @@ const App: React.FC = () => {
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 mt-auto py-6">
         <div className="max-w-7xl mx-auto px-4 text-center text-slate-400 text-xs">
-            <p>SPIN - Supply Insulin Pen Network &copy; 2025 | Version {metadata.version}</p>
+            <p>SPIN - Supply Insulin Pen Network &copy; 2025 | Version {METADATA.version}</p>
         </div>
       </footer>
 

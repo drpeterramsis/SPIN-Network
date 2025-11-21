@@ -16,14 +16,15 @@ const getEnv = (key: string) => {
         if (import.meta.env[`VITE_${key}`]) return import.meta.env[`VITE_${key}`];
     }
     
-    return '';
+    return null;
 };
 
-const supabaseUrl = getEnv('SUPABASE_URL');
-const supabaseKey = getEnv('SUPABASE_ANON_KEY');
+// Use environment variables if available, otherwise fall back to the hardcoded values
+const supabaseUrl = getEnv('SUPABASE_URL') || 'https://eemfzcaxaduwifqkdymy.supabase.co';
+const supabaseKey = getEnv('SUPABASE_ANON_KEY') || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlbWZ6Y2F4YWR1d2lmcWtkeW15Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2MzEwMzcsImV4cCI6MjA3OTIwNzAzN30.FRBPbDq7SgyHUKeJ6V2VPol6scnRYOuigk6YzF8mTQw';
 
 export const isSupabaseConfigured = () => {
-    return supabaseUrl && supabaseKey && supabaseUrl.length > 0 && supabaseKey.length > 0;
+    return supabaseUrl && supabaseKey && supabaseUrl.length > 0 && supabaseKey.length > 0 && supabaseUrl !== 'https://your-project.supabase.co';
 };
 
 // Create a single supabase client for interacting with your database
