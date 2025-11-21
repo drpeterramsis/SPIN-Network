@@ -65,8 +65,14 @@ export const AIReportModal: React.FC<AIReportModalProps> = ({ isOpen, onClose, d
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
-      <div className="bg-white w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden border-t-4 border-[#FFC600] shadow-2xl">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden border-t-4 border-[#FFC600] shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         
         {/* Header */}
         <div className="bg-black p-5 flex justify-between items-center">
