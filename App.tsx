@@ -23,8 +23,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v1.0.0",
-  version: "1.0.0"
+  name: "SPIN v1.0.2",
+  version: "1.0.2"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'history';
