@@ -27,7 +27,8 @@ import {
   ArrowRight,
   ArrowLeftRight,
   Briefcase,
-  Store
+  Store,
+  X
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -35,8 +36,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.005",
-  version: "2.0.005"
+  name: "SPIN v2.0.006",
+  version: "2.0.006"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'history';
@@ -79,14 +80,18 @@ const App: React.FC = () => {
   const [newHCP, setNewHCP] = useState({ full_name: '', specialty: '', hospital: '' });
 
   // Custody Actions Forms
+  const [showClinicModal, setShowClinicModal] = useState(false);
+  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString() });
+
+  // Stock Forms
+  const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '' });
   const [transferForm, setTransferForm] = useState({ 
       toCustodyId: '', 
       quantity: 0, 
       date: getTodayString(),
-      sourceType: 'educator' as 'educator' | 'rep' | 'clinic',
+      sourceType: 'rep' as 'educator' | 'rep',
       educatorName: ''
   });
-  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString() });
 
   // Initialization
   useEffect(() => {
@@ -243,10 +248,40 @@ const App: React.FC = () => {
   };
 
   // Custody Actions
-  const handleStockTransaction = async (e: React.FormEvent) => {
+  const handleReceiveStock = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!repCustody) {
+          alert("Rep Custody not initialized.");
+          return;
+      }
+      const { quantity, educatorName } = receiveForm;
+      if (!quantity) {
+          alert("Please enter quantity.");
+          return;
+      }
+
+      try {
+          await dataService.processStockTransaction(
+              repCustody.id,
+              Number(quantity),
+              getTodayString(),
+              `Educator: ${educatorName || 'Unknown'}`
+          );
+          alert("Stock received successfully into My Inventory.");
+          setReceiveForm({ quantity: 0, educatorName: '' });
+          loadData();
+      } catch (err: any) {
+          alert("Error: " + err.message);
+      }
+  };
+
+  const handleTransferStock = async (e: React.FormEvent) => {
     e.preventDefault();
     const { toCustodyId, quantity, date, sourceType, educatorName } = transferForm;
-    if (!toCustodyId || !quantity) return;
+    if (!toCustodyId || !quantity) {
+        alert("Please select a destination and quantity.");
+        return;
+    }
 
     try {
         let fromCustodyId = undefined;
@@ -270,14 +305,23 @@ const App: React.FC = () => {
   const handleAddClinic = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClinicForm.name) return;
-    await dataService.createCustody({
-      name: newClinicForm.name,
-      type: 'clinic',
-      created_at: newClinicForm.date
-    });
-    alert("Clinic Custody Registered");
-    setNewClinicForm({ ...newClinicForm, name: '' });
-    loadData();
+    try {
+        const created = await dataService.createCustody({
+            name: newClinicForm.name,
+            type: 'clinic',
+            created_at: newClinicForm.date
+        });
+        alert("Clinic Custody Registered");
+        setNewClinicForm({ ...newClinicForm, name: '' });
+        setShowClinicModal(false);
+        
+        // Update list and select the new one
+        const updatedCustodies = await dataService.getCustodies();
+        setCustodies(updatedCustodies);
+        setTransferForm(prev => ({ ...prev, toCustodyId: created.id }));
+    } catch (err: any) {
+        alert("Failed to add clinic: " + err.message);
+    }
   };
 
   // Component for Locked State
@@ -332,9 +376,12 @@ const App: React.FC = () => {
                 className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="bg-black p-4 flex items-center gap-3">
-                     <Stethoscope className="w-5 h-5 text-[#FFC600]" />
-                     <h3 className="text-white font-bold">Register New Doctor</h3>
+                <div className="bg-black p-4 flex items-center justify-between">
+                     <div className="flex items-center gap-3">
+                        <Stethoscope className="w-5 h-5 text-[#FFC600]" />
+                        <h3 className="text-white font-bold">Register New Doctor</h3>
+                     </div>
+                     <button onClick={() => setShowHCPModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
                 <form onSubmit={handleCreateHCP} className="p-6 space-y-4">
                     <div>
@@ -374,6 +421,55 @@ const App: React.FC = () => {
                         className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide"
                     >
                         Add to Directory
+                    </button>
+                </form>
+            </div>
+        </div>
+      )}
+
+      {/* NEW CLINIC MODAL */}
+      {showClinicModal && (
+        <div 
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
+            onClick={() => setShowClinicModal(false)}
+        >
+            <div 
+                className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="bg-black p-4 flex items-center justify-between">
+                     <div className="flex items-center gap-3">
+                        <Store className="w-5 h-5 text-[#FFC600]" />
+                        <h3 className="text-white font-bold">Add Clinic / Location</h3>
+                     </div>
+                     <button onClick={() => setShowClinicModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+                </div>
+                <form onSubmit={handleAddClinic} className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Location Name</label>
+                        <input 
+                            required
+                            type="text" 
+                            placeholder="Pharmacy or Clinic Name"
+                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
+                            value={newClinicForm.name}
+                            onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Registration Date</label>
+                        <input 
+                            type="date" 
+                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
+                            value={newClinicForm.date}
+                            onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})}
+                        />
+                    </div>
+                    <button 
+                        type="submit" 
+                        className="w-full bg-black hover:bg-slate-800 text-white font-bold py-3 uppercase tracking-wide"
+                    >
+                        Register Location
                     </button>
                 </form>
             </div>
@@ -572,11 +668,7 @@ const App: React.FC = () => {
                                 <p className="text-xs text-slate-400">Add stock received from Patient Educator.</p>
                             </div>
                             <form 
-                                onSubmit={(e) => {
-                                    // Force source to be educator for "My Stock" addition
-                                    setTransferForm(prev => ({ ...prev, toCustodyId: repCustody?.id || '', sourceType: 'educator' }));
-                                    handleStockTransaction(e);
-                                }} 
+                                onSubmit={handleReceiveStock} 
                                 className="flex flex-wrap gap-3 items-end w-full md:w-auto"
                             >
                                 <div>
@@ -586,8 +678,8 @@ const App: React.FC = () => {
                                         required
                                         placeholder="Educator Name"
                                         className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40"
-                                        value={transferForm.educatorName}
-                                        onChange={e => setTransferForm({...transferForm, educatorName: e.target.value})}
+                                        value={receiveForm.educatorName}
+                                        onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
                                     />
                                 </div>
                                 <div>
@@ -597,8 +689,8 @@ const App: React.FC = () => {
                                         min="1"
                                         className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20"
                                         placeholder="0"
-                                        value={transferForm.quantity}
-                                        onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
+                                        value={receiveForm.quantity}
+                                        onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
                                     />
                                 </div>
                                 <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">
@@ -652,9 +744,12 @@ const App: React.FC = () => {
                         {/* Right: Actions */}
                         <div className="space-y-6">
                             
-                            {/* Register Clinic */}
+                            {/* Register Clinic (Inline removed, moved to modal via Supply form) */}
+                            {/* Keeping Inline for existing user familiarity? No, prompt asked for direct add from list. I'll focus on the supply form. */}
                             <div className="bg-white shadow-sm border border-slate-200 p-6">
-                                <h3 className="text-sm font-bold mb-4 uppercase text-slate-500 flex items-center gap-2"><Plus className="w-4 h-4" /> New Location</h3>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-sm font-bold uppercase text-slate-500 flex items-center gap-2"><Plus className="w-4 h-4" /> New Location</h3>
+                                </div>
                                 <form onSubmit={handleAddClinic} className="space-y-4">
                                     <input 
                                         type="text"
@@ -679,9 +774,18 @@ const App: React.FC = () => {
                             {/* Transfer / Supply Stock */}
                             <div className="bg-white shadow-sm border-l-4 border-blue-500 p-6">
                                 <h3 className="text-sm font-bold mb-4 uppercase text-blue-900 flex items-center gap-2"><ArrowLeftRight className="w-4 h-4" /> Supply Clinic</h3>
-                                <form onSubmit={handleStockTransaction} className="space-y-4">
+                                <form onSubmit={handleTransferStock} className="space-y-4">
                                     <div>
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Destination</label>
+                                        <div className="flex justify-between items-end mb-1">
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase">Destination</label>
+                                            <button 
+                                                type="button"
+                                                onClick={() => setShowClinicModal(true)}
+                                                className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
+                                            >
+                                                <Plus className="w-3 h-3" /> New
+                                            </button>
+                                        </div>
                                         <select 
                                             className="w-full border p-2 bg-slate-50 text-sm"
                                             value={transferForm.toCustodyId}
@@ -719,32 +823,8 @@ const App: React.FC = () => {
                                                 <span className="text-xs font-bold">My Inventory (Rep)</span>
                                                 <span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span>
                                             </label>
-                                            <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
-                                                <input 
-                                                    type="radio" 
-                                                    name="sourceType" 
-                                                    checked={transferForm.sourceType === 'educator'}
-                                                    onChange={() => setTransferForm({...transferForm, sourceType: 'educator'})}
-                                                />
-                                                <span className="text-xs font-bold">Direct from Educator</span>
-                                                <span className="text-[10px] text-green-500 ml-auto font-bold">+ Add New</span>
-                                            </label>
                                         </div>
                                     </div>
-
-                                    {transferForm.sourceType === 'educator' && (
-                                        <div>
-                                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Educator Name</label>
-                                            <input 
-                                                type="text"
-                                                required 
-                                                placeholder="Name of Educator"
-                                                className="w-full border p-2 bg-slate-50 text-sm"
-                                                value={transferForm.educatorName}
-                                                onChange={e => setTransferForm({...transferForm, educatorName: e.target.value})}
-                                            />
-                                        </div>
-                                    )}
                                     
                                     <button type="submit" className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700">
                                         Confirm Transfer

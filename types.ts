@@ -7,7 +7,7 @@ export interface Product {
 }
 
 export const PRODUCTS: Product[] = [
-  { id: 'glargivin-100', name: 'Glargivin 100 IU', type: 'pen' },
+  { id: 'glargivin-100', name: 'Glargivin 100 IU', type: 'cartridge' },
   { id: 'humaxin-r', name: 'Humaxin R Cart', type: 'cartridge' },
   { id: 'humaxin-mix', name: 'Humaxin Mix 70/30 Cart', type: 'cartridge' }
 ];
