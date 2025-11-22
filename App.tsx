@@ -24,8 +24,10 @@ import {
   UserCircle,
   Stethoscope,
   Building2,
-  Calendar,
-  ArrowRight
+  ArrowRight,
+  ArrowLeftRight,
+  Briefcase,
+  Store
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -33,8 +35,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.003",
-  version: "2.0.003"
+  name: "SPIN v2.0.004",
+  version: "2.0.004"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'history';
@@ -51,6 +53,7 @@ const App: React.FC = () => {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [hcps, setHcps] = useState<HCP[]>([]);
   const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [repCustody, setRepCustody] = useState<Custody | null>(null);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
@@ -74,8 +77,15 @@ const App: React.FC = () => {
   const [showHCPModal, setShowHCPModal] = useState(false);
   const [newHCP, setNewHCP] = useState({ full_name: '', specialty: '', hospital: '' });
 
-  // Custody Forms
-  const [stockForm, setStockForm] = useState({ custodyId: '', productId: PRODUCTS[0].id, quantity: 0, source: 'Medical Rep', date: getTodayString() });
+  // Custody Actions Forms
+  const [transferForm, setTransferForm] = useState({ 
+      toCustodyId: '', 
+      productId: PRODUCTS[0].id, 
+      quantity: 0, 
+      date: getTodayString(),
+      sourceType: 'educator' as 'educator' | 'rep' | 'clinic',
+      customSource: 'Patient Educator'
+  });
   const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString(), source: 'Medical Rep' });
 
   // Initialization
@@ -101,14 +111,16 @@ const App: React.FC = () => {
   const loadData = useCallback(async () => {
     if (!user) return; // Don't fetch data if not logged in
     try {
-      const [d, h, c] = await Promise.all([
+      const [d, h, c, repC] = await Promise.all([
         dataService.getDeliveries(),
         dataService.getHCPs(),
-        dataService.getCustodies()
+        dataService.getCustodies(),
+        dataService.getRepCustody()
       ]);
       setDeliveries(d);
       setHcps(h);
       setCustodies(c);
+      setRepCustody(repC);
     } catch (error) {
       console.error("Load error", error);
     }
@@ -229,19 +241,31 @@ const App: React.FC = () => {
   };
 
   // Custody Actions
-  const handleAddStock = async (e: React.FormEvent) => {
+  const handleStockTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!stockForm.custodyId || !stockForm.quantity) return;
-    await dataService.addStock({
-      custody_id: stockForm.custodyId,
-      product_id: stockForm.productId,
-      quantity: Number(stockForm.quantity),
-      transaction_date: stockForm.date,
-      source: stockForm.source
-    });
-    alert("Stock added successfully");
-    setStockForm({ ...stockForm, quantity: 0 });
-    loadData();
+    const { toCustodyId, productId, quantity, date, sourceType, customSource } = transferForm;
+    if (!toCustodyId || !quantity) return;
+
+    try {
+        let fromCustodyId = undefined;
+        let sourceLabel = customSource;
+
+        if (sourceType === 'rep') {
+            if (!repCustody) throw new Error("Rep custody not found");
+            fromCustodyId = repCustody.id;
+            sourceLabel = 'Medical Rep Transfer';
+        } else if (sourceType === 'clinic') {
+            // "Return from clinic" logic not fully UI implemented yet, but supported by logic
+            sourceLabel = 'Clinic Transfer';
+        }
+
+        await dataService.processStockTransaction(toCustodyId, productId, Number(quantity), date, sourceLabel, fromCustodyId);
+        alert("Stock updated successfully");
+        setTransferForm({ ...transferForm, quantity: 0 });
+        loadData();
+    } catch (err: any) {
+        alert("Error: " + err.message);
+    }
   };
 
   const handleAddClinic = async (e: React.FormEvent) => {
@@ -514,33 +538,6 @@ const App: React.FC = () => {
                           </div>
                       </div>
                       </div>
-
-                      {/* Recent Activity List */}
-                      <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-700">
-                      <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-                          <h3 className="font-bold text-slate-800">Recent Network Activity</h3>
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                          {deliveries.slice(0, 5).map(d => (
-                          <div key={d.id} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50">
-                              <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-bold text-slate-500">
-                                  {d.patient?.full_name.charAt(0)}
-                              </div>
-                              <div>
-                                  <p className="text-sm font-bold text-slate-900">{d.patient?.full_name}</p>
-                                  <p className="text-xs text-slate-500">{getProductName(d.product_id)}</p>
-                              </div>
-                              </div>
-                              <div className="text-right">
-                              <p className="text-xs font-bold text-slate-400">{formatDateFriendly(d.delivery_date)}</p>
-                              <p className="text-xs text-slate-500">{d.custody?.name || 'Unknown Source'}</p>
-                              </div>
-                          </div>
-                          ))}
-                          {deliveries.length === 0 && <div className="p-8 text-center text-slate-400">No activity recorded yet.</div>}
-                      </div>
-                      </div>
                   </>
               )}
             </div>
@@ -551,150 +548,236 @@ const App: React.FC = () => {
              !user ? (
                  <LockedState title="Inventory Locked" description="Authorized personnel only." />
              ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
+                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
                     
-                    {/* CUSTODY LIST & TOTALS */}
-                    <div className="bg-white shadow-sm border border-slate-200 p-6">
-                        <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Building2 className="w-5 h-5 text-[#FFC600]" /> Custody Locations</h3>
-                        <div className="space-y-4">
-                            {custodies.map(c => (
-                                <div key={c.id} className="border border-slate-100 p-4 rounded hover:border-[#FFC600] transition-colors">
-                                    <div className="flex justify-between items-start mb-3">
-                                        <div>
-                                            <h4 className="font-bold text-slate-900">{c.name}</h4>
-                                            <span className="text-[10px] font-bold uppercase bg-slate-100 px-2 py-1 rounded text-slate-500">{c.type}</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <span className="text-xs text-slate-400 block">Added</span>
-                                            <span className="text-xs font-bold">{formatDateFriendly(c.created_at)}</span>
-                                        </div>
+                    {/* TOP SECTION: MY REP STOCK */}
+                    <div className="bg-white shadow-sm border-t-4 border-[#FFC600]">
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                                    <Briefcase className="w-6 h-6 text-[#FFC600]" /> My Inventory
+                                </h2>
+                                <p className="text-xs text-slate-500 mt-1 uppercase tracking-wide">Medical Rep Stock (You)</p>
+                            </div>
+                            <div className="text-right">
+                                <span className="text-2xl font-black text-slate-900">
+                                    {/* Fix: Explicitly type reduce arguments to avoid 'unknown' type error */}
+                                    {repCustody?.stock ? Object.values(repCustody.stock).reduce((a: number, b: number) => a + b, 0) : 0}
+                                </span>
+                                <span className="text-xs text-slate-500 block">Total Units</span>
+                            </div>
+                        </div>
+                        
+                        <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {PRODUCTS.map(p => (
+                                <div key={p.id} className="bg-slate-50 p-4 rounded border border-slate-200 flex justify-between items-center">
+                                    <div>
+                                        <span className="block text-xs font-bold text-slate-400 uppercase">{p.type}</span>
+                                        <span className="font-bold text-slate-900">{p.name}</span>
                                     </div>
-                                    
-                                    {/* Stock Summary */}
-                                    <div className="bg-slate-50 p-3 rounded text-xs">
-                                        <div className="font-bold text-slate-500 mb-2 uppercase">Current Stock</div>
-                                        {c.stock && Object.entries(c.stock).length > 0 ? (
-                                            <div className="space-y-1">
-                                                {Object.entries(c.stock).map(([pid, qty]) => (
-                                                    <div key={pid} className="flex justify-between">
-                                                        <span>{getProductName(pid)}</span>
-                                                        <span className="font-bold text-slate-900">{qty} units</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <div className="text-slate-400 italic">No stock recorded</div>
-                                        )}
-                                    </div>
+                                    <span className="text-2xl font-bold text-[#FFC600]">
+                                        {repCustody?.stock?.[p.id] || 0}
+                                    </span>
                                 </div>
                             ))}
-                            {custodies.length === 0 && <p className="text-slate-400 italic">No custody locations found.</p>}
+                        </div>
+                        
+                        <div className="p-6 bg-slate-900 text-white flex flex-col md:flex-row gap-4 items-center">
+                            <div className="flex-1">
+                                <h3 className="font-bold text-white flex items-center gap-2"><Package className="w-4 h-4 text-[#FFC600]" /> Add Stock to My Inventory</h3>
+                                <p className="text-xs text-slate-400">Receive stock from Patient Educator or Warehouse.</p>
+                            </div>
+                            <form 
+                                onSubmit={(e) => {
+                                    // Force source to be educator for "My Stock" addition
+                                    setTransferForm(prev => ({ ...prev, toCustodyId: repCustody?.id || '', sourceType: 'educator' }));
+                                    handleStockTransaction(e);
+                                }} 
+                                className="flex flex-wrap gap-3 items-end w-full md:w-auto"
+                            >
+                                <div>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Product</label>
+                                    <select 
+                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-32"
+                                        value={transferForm.productId}
+                                        onChange={e => setTransferForm({...transferForm, productId: e.target.value})}
+                                    >
+                                        {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty</label>
+                                    <input 
+                                        type="number" 
+                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20"
+                                        placeholder="0"
+                                        value={transferForm.quantity}
+                                        onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source</label>
+                                    <input 
+                                        type="text" 
+                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-32"
+                                        value={transferForm.customSource}
+                                        onChange={e => setTransferForm({...transferForm, customSource: e.target.value, sourceType: 'educator'})}
+                                    />
+                                </div>
+                                <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">
+                                    Add
+                                </button>
+                            </form>
                         </div>
                     </div>
 
-                    {/* ACTIONS */}
-                    <div className="space-y-6">
-                        {/* Add Stock Form */}
-                        <div className="bg-white shadow-sm border border-slate-200 p-6">
-                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-[#FFC600]" /> Add Stock (Rep)</h3>
-                            <form onSubmit={handleAddStock} className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Destination Custody</label>
-                                    <select 
-                                        className="w-full border p-2 bg-slate-50 text-sm"
-                                        value={stockForm.custodyId}
-                                        onChange={e => setStockForm({...stockForm, custodyId: e.target.value})}
-                                        required
-                                    >
-                                        <option value="">-- Select Location --</option>
-                                        {custodies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                    </select>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label>
-                                        <select 
-                                            className="w-full border p-2 bg-slate-50 text-sm"
-                                            value={stockForm.productId}
-                                            onChange={e => setStockForm({...stockForm, productId: e.target.value})}
-                                        >
-                                            {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                        </select>
+                    {/* SECOND SECTION: CLINIC NETWORK & TRANSFERS */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        
+                        {/* Left: Clinic List */}
+                        <div className="lg:col-span-2 bg-white shadow-sm border border-slate-200">
+                            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                                <h3 className="font-bold text-slate-800 flex items-center gap-2"><Store className="w-5 h-5" /> Clinic / Pharmacy Network</h3>
+                                <span className="text-xs font-bold bg-slate-200 px-2 py-1 rounded text-slate-600">{custodies.filter(c => c.type === 'clinic').length} Locations</span>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                                {custodies.filter(c => c.type === 'clinic').map(clinic => (
+                                    <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group">
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div>
+                                                <h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4>
+                                                <p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p>
+                                            </div>
+                                            <button 
+                                                onClick={() => {
+                                                    setTransferForm(prev => ({...prev, toCustodyId: clinic.id}));
+                                                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-1 text-xs font-bold uppercase rounded flex items-center gap-1"
+                                            >
+                                                Supply Stock <ArrowRight className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                        
+                                        {/* Compact Stock View */}
+                                        <div className="flex gap-4 mt-2">
+                                            {PRODUCTS.map(p => (
+                                                <div key={p.id} className="text-xs">
+                                                    <span className="text-slate-400 block">{p.name.split(' ')[0]}</span>
+                                                    <span className="font-bold text-slate-800">{clinic.stock?.[p.id] || 0}</span>
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label>
-                                        <input 
-                                            type="number" 
-                                            min="1"
-                                            className="w-full border p-2 bg-slate-50 text-sm"
-                                            value={stockForm.quantity}
-                                            onChange={e => setStockForm({...stockForm, quantity: Number(e.target.value)})}
-                                        />
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label>
-                                        <input 
-                                            type="date" 
-                                            className="w-full border p-2 bg-slate-50 text-sm"
-                                            value={stockForm.date}
-                                            onChange={e => setStockForm({...stockForm, date: e.target.value})}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source</label>
-                                        <input 
-                                            type="text" 
-                                            className="w-full border p-2 bg-slate-50 text-sm"
-                                            value={stockForm.source}
-                                            onChange={e => setStockForm({...stockForm, source: e.target.value})}
-                                        />
-                                    </div>
-                                </div>
-                                <button type="submit" className="w-full bg-black text-white py-3 font-bold uppercase text-sm hover:bg-slate-800">Log Stock Addition</button>
-                            </form>
+                                ))}
+                                {custodies.filter(c => c.type === 'clinic').length === 0 && (
+                                    <div className="p-8 text-center text-slate-400 italic">No clinics registered yet.</div>
+                                )}
+                            </div>
                         </div>
 
-                        {/* Add Clinic Form */}
-                        <div className="bg-white shadow-sm border border-slate-200 p-6">
-                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-[#FFC600]" /> Register Clinic Custody</h3>
-                             <form onSubmit={handleAddClinic} className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Clinic / Custody Name</label>
+                        {/* Right: Actions */}
+                        <div className="space-y-6">
+                            
+                            {/* Register Clinic */}
+                            <div className="bg-white shadow-sm border border-slate-200 p-6">
+                                <h3 className="text-sm font-bold mb-4 uppercase text-slate-500 flex items-center gap-2"><Plus className="w-4 h-4" /> New Location</h3>
+                                <form onSubmit={handleAddClinic} className="space-y-4">
                                     <input 
                                         type="text"
-                                        className="w-full border p-2 bg-slate-50 text-sm"
+                                        className="w-full border p-2 bg-slate-50 text-sm font-bold"
+                                        placeholder="Clinic / Pharmacy Name"
                                         value={newClinicForm.name}
                                         onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})}
                                         required
                                     />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Registration Date</label>
+                                    <div className="flex gap-2">
                                         <input 
                                             type="date" 
                                             className="w-full border p-2 bg-slate-50 text-sm"
                                             value={newClinicForm.date}
                                             onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})}
                                         />
+                                        <button type="submit" className="bg-black text-white px-4 font-bold uppercase text-xs">Add</button>
                                     </div>
+                                </form>
+                            </div>
+
+                            {/* Transfer / Supply Stock */}
+                            <div className="bg-white shadow-sm border-l-4 border-blue-500 p-6">
+                                <h3 className="text-sm font-bold mb-4 uppercase text-blue-900 flex items-center gap-2"><ArrowLeftRight className="w-4 h-4" /> Supply Clinic</h3>
+                                <form onSubmit={handleStockTransaction} className="space-y-4">
                                     <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Initial Source</label>
-                                        <input 
-                                            type="text" 
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Destination</label>
+                                        <select 
                                             className="w-full border p-2 bg-slate-50 text-sm"
-                                            value={newClinicForm.source}
-                                            onChange={e => setNewClinicForm({...newClinicForm, source: e.target.value})}
-                                        />
+                                            value={transferForm.toCustodyId}
+                                            onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})}
+                                            required
+                                        >
+                                            <option value="">-- Select Clinic --</option>
+                                            {custodies.filter(c => c.type === 'clinic').map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
                                     </div>
-                                </div>
-                                <button type="submit" className="w-full border-2 border-black text-black py-2 font-bold uppercase text-sm hover:bg-slate-50">Create Custody Location</button>
-                             </form>
+                                    <div className="grid grid-cols-2 gap-2">
+                                         <div>
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Product</label>
+                                            <select 
+                                                className="w-full border p-2 bg-slate-50 text-sm"
+                                                value={transferForm.productId}
+                                                onChange={e => setTransferForm({...transferForm, productId: e.target.value})}
+                                            >
+                                                {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity</label>
+                                            <input 
+                                                type="number" 
+                                                min="1"
+                                                className="w-full border p-2 bg-slate-50 text-sm"
+                                                value={transferForm.quantity}
+                                                onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Source of Stock</label>
+                                        <div className="flex flex-col gap-2">
+                                            <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
+                                                <input 
+                                                    type="radio" 
+                                                    name="sourceType" 
+                                                    checked={transferForm.sourceType === 'rep'}
+                                                    onChange={() => setTransferForm({...transferForm, sourceType: 'rep'})}
+                                                />
+                                                <span className="text-xs font-bold">My Inventory (Rep)</span>
+                                                <span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span>
+                                            </label>
+                                            <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
+                                                <input 
+                                                    type="radio" 
+                                                    name="sourceType" 
+                                                    checked={transferForm.sourceType === 'educator'}
+                                                    onChange={() => setTransferForm({...transferForm, sourceType: 'educator'})}
+                                                />
+                                                <span className="text-xs font-bold">Direct from Educator</span>
+                                                <span className="text-[10px] text-green-500 ml-auto font-bold">+ Add New</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="submit" className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700">
+                                        Confirm Transfer
+                                    </button>
+                                </form>
+                            </div>
+
                         </div>
                     </div>
-
                 </div>
              )
           )}
@@ -808,8 +891,13 @@ const App: React.FC = () => {
                                         onChange={e => setSelectedCustody(e.target.value)}
                                     >
                                         <option value="">-- Select Source --</option>
-                                        {custodies.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                                        {/* Grouping logic: Rep first, then clinics */}
+                                        {custodies.filter(c => c.type === 'rep').map(c => (
+                                            <option key={c.id} value={c.id}>My Inventory (Rep)</option>
+                                        ))}
+                                        <option disabled>──────────</option>
+                                        {custodies.filter(c => c.type === 'clinic').map(c => (
+                                            <option key={c.id} value={c.id}>{c.name} (Clinic)</option>
                                         ))}
                                     </select>
                                 </div>

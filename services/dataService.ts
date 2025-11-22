@@ -18,7 +18,7 @@ const MOCK_HCPS: HCP[] = [
 ];
 
 const MOCK_CUSTODY: Custody[] = [
-  { id: 'custody-1', name: 'Main Rep Stock', type: 'rep', created_at: new Date().toISOString(), stock: { 'glargivin-100': 50, 'humaxin-r': 30 } },
+  { id: 'rep-main', name: 'My Rep Inventory', type: 'rep', created_at: new Date().toISOString(), stock: { 'glargivin-100': 50, 'humaxin-r': 30 } },
   { id: 'custody-2', name: 'City General Clinic', type: 'clinic', created_at: new Date().toISOString(), stock: { 'glargivin-100': 10 } }
 ];
 
@@ -27,7 +27,6 @@ export const dataService = {
   // --- PATIENTS ---
   async searchPatient(query: string): Promise<Patient | null> {
     if (isSupabaseConfigured() && supabase) {
-      // Search by National ID OR Phone Number
       const { data, error } = await supabase
         .from('patients')
         .select('*')
@@ -40,10 +39,6 @@ export const dataService = {
       const patients: Patient[] = JSON.parse(localStorage.getItem(KEYS.PATIENTS) || '[]');
       return patients.find(p => p.national_id === query || p.phone_number === query) || null;
     }
-  },
-
-  async getPatientByNationalID(nid: string): Promise<Patient | null> {
-    return this.searchPatient(nid);
   },
 
   async createPatient(patient: Omit<Patient, 'id'>): Promise<Patient> {
@@ -93,10 +88,8 @@ export const dataService = {
   // --- CUSTODY & STOCK ---
   async getCustodies(): Promise<Custody[]> {
     if (isSupabaseConfigured() && supabase) {
-        const { data, error } = await supabase.from('custody').select('*');
+        const { data, error } = await supabase.from('custody').select('*').order('created_at');
         if (error) throw error;
-        // For Supabase, we'd need to aggregate stock from transactions or a separate table
-        // Currently returning simplified structure
         return data;
     } else {
         const stored = localStorage.getItem(KEYS.CUSTODY);
@@ -106,6 +99,16 @@ export const dataService = {
         }
         return JSON.parse(stored);
     }
+  },
+
+  async getRepCustody(): Promise<Custody> {
+      const custodies = await this.getCustodies();
+      let rep = custodies.find(c => c.type === 'rep');
+      if (!rep) {
+          // Create default rep custody if missing
+          rep = await this.createCustody({ name: 'My Inventory', type: 'rep', created_at: new Date().toISOString() });
+      }
+      return rep;
   },
 
   async createCustody(custody: Omit<Custody, 'id' | 'stock'>): Promise<Custody> {
@@ -122,25 +125,79 @@ export const dataService = {
       }
   },
 
-  async addStock(transaction: Omit<StockTransaction, 'id'>): Promise<void> {
+  // Unified Stock Transaction Manager
+  // If 'fromCustodyId' is provided, it deducts from there (Transfer)
+  // 'toCustodyId' always receives stock
+  async processStockTransaction(
+    toCustodyId: string, 
+    productId: string, 
+    quantity: number, 
+    date: string, 
+    sourceLabel: string,
+    fromCustodyId?: string
+  ): Promise<void> {
      if (isSupabaseConfigured() && supabase) {
-         await supabase.from('stock_transactions').insert([transaction]);
-         // Trigger or function would update aggregates in real DB
+         // Log transaction
+         await supabase.from('stock_transactions').insert([{
+             custody_id: toCustodyId,
+             product_id: productId,
+             quantity: quantity,
+             transaction_date: date,
+             source: fromCustodyId ? `Transfer from ${fromCustodyId}` : sourceLabel
+         }]);
+         
+         // In a real DB, we'd use a transaction or triggers. 
+         // Here we blindly attempt to update the JSON/columns if they exist or assume aggregates
+         // For this demo compatibility, we rely on the client refetching updated aggregates if using triggers
      } else {
-         // Update Local Storage Transaction Log
-         const transList: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
-         transList.push({ ...transaction, id: uuidv4() });
-         localStorage.setItem(KEYS.STOCK, JSON.stringify(transList));
-
-         // Update Aggregated Stock in Custody Object (Mock Logic)
+         // 1. Load Data
          const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || JSON.stringify(MOCK_CUSTODY));
-         const custody = custodies.find(c => c.id === transaction.custody_id);
-         if (custody) {
-             if (!custody.stock) custody.stock = {};
-             const current = custody.stock[transaction.product_id] || 0;
-             custody.stock[transaction.product_id] = current + transaction.quantity;
-             localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
+         const transList: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+
+         // 2. Handle Deduction (Transfer)
+         if (fromCustodyId) {
+             const fromCustody = custodies.find(c => c.id === fromCustodyId);
+             if (fromCustody) {
+                 if (!fromCustody.stock) fromCustody.stock = {};
+                 const current = fromCustody.stock[productId] || 0;
+                 if (current < quantity) {
+                     throw new Error(`Insufficient stock in source custody (${current} available).`);
+                 }
+                 fromCustody.stock[productId] = current - quantity;
+                 
+                 // Log Outbound
+                 transList.push({
+                    id: uuidv4(),
+                    custody_id: fromCustodyId,
+                    product_id: productId,
+                    quantity: -quantity,
+                    transaction_date: date,
+                    source: `Transfer to ${toCustodyId}`
+                 });
+             }
          }
+
+         // 3. Handle Addition (Receipt)
+         const toCustody = custodies.find(c => c.id === toCustodyId);
+         if (toCustody) {
+             if (!toCustody.stock) toCustody.stock = {};
+             const current = toCustody.stock[productId] || 0;
+             toCustody.stock[productId] = current + quantity;
+
+             // Log Inbound
+             transList.push({
+                id: uuidv4(),
+                custody_id: toCustodyId,
+                product_id: productId,
+                quantity: quantity,
+                transaction_date: date,
+                source: fromCustodyId ? `Transfer from ${fromCustodyId}` : sourceLabel
+             });
+         }
+
+         // 4. Save
+         localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
+         localStorage.setItem(KEYS.STOCK, JSON.stringify(transList));
      }
   },
 
