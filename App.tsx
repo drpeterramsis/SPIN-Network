@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Auth } from './components/Auth';
 import { dataService } from './services/dataService';
 import { formatDateFriendly, getTodayString } from './utils/time';
-import { Delivery, Patient, HCP, PRODUCTS } from './types';
+import { Delivery, Patient, HCP, Custody, PRODUCTS } from './types';
 import { 
   LogOut, 
   LogIn,
@@ -22,7 +22,10 @@ import {
   ShieldCheck,
   BarChart3,
   UserCircle,
-  Stethoscope
+  Stethoscope,
+  Building2,
+  Calendar,
+  ArrowRight
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -30,11 +33,11 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.002",
-  version: "2.0.002"
+  name: "SPIN v2.0.003",
+  version: "2.0.003"
 };
 
-type Tab = 'dashboard' | 'deliver' | 'history';
+type Tab = 'dashboard' | 'deliver' | 'custody' | 'history';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
@@ -47,6 +50,7 @@ const App: React.FC = () => {
   // Data States
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [hcps, setHcps] = useState<HCP[]>([]);
+  const [custodies, setCustodies] = useState<Custody[]>([]);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
@@ -55,13 +59,24 @@ const App: React.FC = () => {
   const [nidSearch, setNidSearch] = useState('');
   const [foundPatient, setFoundPatient] = useState<Patient | null>(null);
   const [newPatientForm, setNewPatientForm] = useState({ full_name: '', phone_number: '' });
+  
   const [selectedHCP, setSelectedHCP] = useState('');
   const [selectedProduct, setSelectedProduct] = useState(PRODUCTS[0].id);
+  const [selectedCustody, setSelectedCustody] = useState('');
+  
+  const [deliveryDate, setDeliveryDate] = useState(getTodayString());
+  const [rxDate, setRxDate] = useState('');
+  const [educatorDate, setEducatorDate] = useState('');
+  
   const [duplicateWarning, setDuplicateWarning] = useState(false);
 
   // HCP Creation State
   const [showHCPModal, setShowHCPModal] = useState(false);
   const [newHCP, setNewHCP] = useState({ full_name: '', specialty: '', hospital: '' });
+
+  // Custody Forms
+  const [stockForm, setStockForm] = useState({ custodyId: '', productId: PRODUCTS[0].id, quantity: 0, source: 'Medical Rep', date: getTodayString() });
+  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString(), source: 'Medical Rep' });
 
   // Initialization
   useEffect(() => {
@@ -86,12 +101,14 @@ const App: React.FC = () => {
   const loadData = useCallback(async () => {
     if (!user) return; // Don't fetch data if not logged in
     try {
-      const [d, h] = await Promise.all([
+      const [d, h, c] = await Promise.all([
         dataService.getDeliveries(),
-        dataService.getHCPs()
+        dataService.getHCPs(),
+        dataService.getCustodies()
       ]);
       setDeliveries(d);
       setHcps(h);
+      setCustodies(c);
     } catch (error) {
       console.error("Load error", error);
     }
@@ -131,6 +148,7 @@ const App: React.FC = () => {
         // Clear sensitive data on logout
         setDeliveries([]);
         setHcps([]);
+        setCustodies([]);
         setUserProfile(null);
     }
   }, [user, loadData]);
@@ -138,7 +156,7 @@ const App: React.FC = () => {
   // Form Logic
   const handlePatientSearch = async () => {
     if (nidSearch.length < 3) return;
-    const p = await dataService.getPatientByNationalID(nidSearch);
+    const p = await dataService.searchPatient(nidSearch);
     setFoundPatient(p);
     if (p) {
       // Check for duplicates immediately
@@ -177,7 +195,10 @@ const App: React.FC = () => {
   };
 
   const handleSubmitDelivery = async () => {
-    if (!foundPatient || !selectedHCP || !selectedProduct) return;
+    if (!foundPatient || !selectedHCP || !selectedProduct || !selectedCustody) {
+      alert("Please fill in all required fields including Custody Source");
+      return;
+    }
     
     try {
       await dataService.logDelivery({
@@ -185,8 +206,11 @@ const App: React.FC = () => {
         hcp_id: selectedHCP,
         product_id: selectedProduct,
         delivered_by: user.id,
-        delivery_date: getTodayString(),
-        quantity: 1
+        quantity: 1,
+        delivery_date: deliveryDate,
+        rx_date: rxDate,
+        educator_submission_date: educatorDate,
+        custody_id: selectedCustody
       });
       
       // Reset
@@ -195,11 +219,42 @@ const App: React.FC = () => {
       setNidSearch('');
       setFoundPatient(null);
       setNewPatientForm({ full_name: '', phone_number: '' });
+      setRxDate('');
+      setEducatorDate('');
       loadData();
       setActiveTab('history');
     } catch (e) {
       alert("Failed to log delivery");
     }
+  };
+
+  // Custody Actions
+  const handleAddStock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stockForm.custodyId || !stockForm.quantity) return;
+    await dataService.addStock({
+      custody_id: stockForm.custodyId,
+      product_id: stockForm.productId,
+      quantity: Number(stockForm.quantity),
+      transaction_date: stockForm.date,
+      source: stockForm.source
+    });
+    alert("Stock added successfully");
+    setStockForm({ ...stockForm, quantity: 0 });
+    loadData();
+  };
+
+  const handleAddClinic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClinicForm.name) return;
+    await dataService.createCustody({
+      name: newClinicForm.name,
+      type: 'clinic',
+      created_at: newClinicForm.date
+    });
+    alert("Clinic Custody Registered");
+    setNewClinicForm({ ...newClinicForm, name: '' });
+    loadData();
   };
 
   // Component for Locked State
@@ -324,7 +379,7 @@ const App: React.FC = () => {
                       className="hidden md:flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider hover:text-[#FFC600] transition-colors"
                     >
                         <UserCircle className="w-4 h-4" />
-                        {user.email}
+                        {userProfile?.full_name || user.email}
                     </button>
                     <button onClick={() => setShowAIModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded transition-colors border border-slate-700 text-[#FFC600]">
                         <Sparkles className="w-3 h-3" /> Intelligence
@@ -356,6 +411,7 @@ const App: React.FC = () => {
             {[
               { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
               { id: 'deliver', label: 'Deliver Pen', icon: Syringe },
+              { id: 'custody', label: 'Custody & Stock', icon: Building2 },
               { id: 'history', label: 'History', icon: History },
             ].map(t => (
               <button
@@ -385,7 +441,7 @@ const App: React.FC = () => {
                               The <strong>Supply Insulin Pen Network</strong> is an advanced tracking and verification system designed to ensure the secure, efficient, and traceable distribution of insulin pens to patients.
                           </p>
                       </div>
-
+                      {/* ... public cards ... */}
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                           <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900">
                               <ShieldCheck className="w-12 h-12 text-[#FFC600] mb-4" />
@@ -448,13 +504,14 @@ const App: React.FC = () => {
                           </div>
                       </div>
                       {/* Card 3 */}
-                      <div className="bg-gradient-to-br from-slate-800 to-black text-white p-6 shadow-lg relative overflow-hidden animate-in slide-in-from-bottom-4 duration-500 delay-150">
-                          <div className="relative z-10">
-                          <p className="text-xs font-bold text-[#FFC600] uppercase mb-1">Network Status</p>
-                          <h3 className="text-xl font-bold">Online</h3>
-                          <p className="text-xs text-slate-400 mt-2">Syncing with SPIN Cloud</p>
+                      <div className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150">
+                          <div>
+                          <p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p>
+                          <h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3>
                           </div>
-                          <Activity className="absolute right-0 bottom-0 w-24 h-24 text-white/5 transform translate-x-4 translate-y-4" />
+                          <div className="bg-slate-100 p-3 rounded-full">
+                          <Building2 className="w-6 h-6 text-slate-900" />
+                          </div>
                       </div>
                       </div>
 
@@ -477,7 +534,7 @@ const App: React.FC = () => {
                               </div>
                               <div className="text-right">
                               <p className="text-xs font-bold text-slate-400">{formatDateFriendly(d.delivery_date)}</p>
-                              <p className="text-xs text-slate-500">{d.hcp?.full_name}</p>
+                              <p className="text-xs text-slate-500">{d.custody?.name || 'Unknown Source'}</p>
                               </div>
                           </div>
                           ))}
@@ -489,6 +546,159 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {/* CUSTODY TAB */}
+          {activeTab === 'custody' && (
+             !user ? (
+                 <LockedState title="Inventory Locked" description="Authorized personnel only." />
+             ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
+                    
+                    {/* CUSTODY LIST & TOTALS */}
+                    <div className="bg-white shadow-sm border border-slate-200 p-6">
+                        <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Building2 className="w-5 h-5 text-[#FFC600]" /> Custody Locations</h3>
+                        <div className="space-y-4">
+                            {custodies.map(c => (
+                                <div key={c.id} className="border border-slate-100 p-4 rounded hover:border-[#FFC600] transition-colors">
+                                    <div className="flex justify-between items-start mb-3">
+                                        <div>
+                                            <h4 className="font-bold text-slate-900">{c.name}</h4>
+                                            <span className="text-[10px] font-bold uppercase bg-slate-100 px-2 py-1 rounded text-slate-500">{c.type}</span>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-xs text-slate-400 block">Added</span>
+                                            <span className="text-xs font-bold">{formatDateFriendly(c.created_at)}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Stock Summary */}
+                                    <div className="bg-slate-50 p-3 rounded text-xs">
+                                        <div className="font-bold text-slate-500 mb-2 uppercase">Current Stock</div>
+                                        {c.stock && Object.entries(c.stock).length > 0 ? (
+                                            <div className="space-y-1">
+                                                {Object.entries(c.stock).map(([pid, qty]) => (
+                                                    <div key={pid} className="flex justify-between">
+                                                        <span>{getProductName(pid)}</span>
+                                                        <span className="font-bold text-slate-900">{qty} units</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-slate-400 italic">No stock recorded</div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                            {custodies.length === 0 && <p className="text-slate-400 italic">No custody locations found.</p>}
+                        </div>
+                    </div>
+
+                    {/* ACTIONS */}
+                    <div className="space-y-6">
+                        {/* Add Stock Form */}
+                        <div className="bg-white shadow-sm border border-slate-200 p-6">
+                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-[#FFC600]" /> Add Stock (Rep)</h3>
+                            <form onSubmit={handleAddStock} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Destination Custody</label>
+                                    <select 
+                                        className="w-full border p-2 bg-slate-50 text-sm"
+                                        value={stockForm.custodyId}
+                                        onChange={e => setStockForm({...stockForm, custodyId: e.target.value})}
+                                        required
+                                    >
+                                        <option value="">-- Select Location --</option>
+                                        {custodies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label>
+                                        <select 
+                                            className="w-full border p-2 bg-slate-50 text-sm"
+                                            value={stockForm.productId}
+                                            onChange={e => setStockForm({...stockForm, productId: e.target.value})}
+                                        >
+                                            {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label>
+                                        <input 
+                                            type="number" 
+                                            min="1"
+                                            className="w-full border p-2 bg-slate-50 text-sm"
+                                            value={stockForm.quantity}
+                                            onChange={e => setStockForm({...stockForm, quantity: Number(e.target.value)})}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label>
+                                        <input 
+                                            type="date" 
+                                            className="w-full border p-2 bg-slate-50 text-sm"
+                                            value={stockForm.date}
+                                            onChange={e => setStockForm({...stockForm, date: e.target.value})}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source</label>
+                                        <input 
+                                            type="text" 
+                                            className="w-full border p-2 bg-slate-50 text-sm"
+                                            value={stockForm.source}
+                                            onChange={e => setStockForm({...stockForm, source: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+                                <button type="submit" className="w-full bg-black text-white py-3 font-bold uppercase text-sm hover:bg-slate-800">Log Stock Addition</button>
+                            </form>
+                        </div>
+
+                        {/* Add Clinic Form */}
+                        <div className="bg-white shadow-sm border border-slate-200 p-6">
+                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-[#FFC600]" /> Register Clinic Custody</h3>
+                             <form onSubmit={handleAddClinic} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Clinic / Custody Name</label>
+                                    <input 
+                                        type="text"
+                                        className="w-full border p-2 bg-slate-50 text-sm"
+                                        value={newClinicForm.name}
+                                        onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})}
+                                        required
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Registration Date</label>
+                                        <input 
+                                            type="date" 
+                                            className="w-full border p-2 bg-slate-50 text-sm"
+                                            value={newClinicForm.date}
+                                            onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Initial Source</label>
+                                        <input 
+                                            type="text" 
+                                            className="w-full border p-2 bg-slate-50 text-sm"
+                                            value={newClinicForm.source}
+                                            onChange={e => setNewClinicForm({...newClinicForm, source: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+                                <button type="submit" className="w-full border-2 border-black text-black py-2 font-bold uppercase text-sm hover:bg-slate-50">Create Custody Location</button>
+                             </form>
+                        </div>
+                    </div>
+
+                </div>
+             )
+          )}
+
           {/* DELIVERY WORKFLOW */}
           {activeTab === 'deliver' && (
             !user ? (
@@ -497,7 +707,7 @@ const App: React.FC = () => {
                   description="You must be a registered distributor or HCP to log new deliveries." 
                 />
             ) : (
-              <div className="bg-white shadow-lg border-t-4 border-[#FFC600] max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-500">
+              <div className="bg-white shadow-lg border-t-4 border-[#FFC600] max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-500">
                   <div className="bg-slate-900 text-white px-8 py-6">
                       <h2 className="text-xl font-bold flex items-center gap-2">
                       <Syringe className="w-5 h-5 text-[#FFC600]" />
@@ -513,7 +723,7 @@ const App: React.FC = () => {
                       <div className="flex gap-2 mb-4">
                           <input 
                               type="text" 
-                              placeholder="Enter National ID" 
+                              placeholder="Search by National ID or Phone" 
                               className="flex-1 border border-slate-300 p-3 bg-slate-50 font-mono focus:ring-2 focus:ring-[#FFC600] outline-none"
                               value={nidSearch}
                               onChange={(e) => setNidSearch(e.target.value)}
@@ -533,7 +743,7 @@ const App: React.FC = () => {
                                   <div>
                                       <p className="font-bold text-green-800">Patient Found</p>
                                       <p className="text-sm text-green-700">{foundPatient.full_name}</p>
-                                      <p className="text-xs text-green-600 font-mono">{foundPatient.national_id}</p>
+                                      <p className="text-xs text-green-600 font-mono">{foundPatient.national_id} | {foundPatient.phone_number}</p>
                                   </div>
                               </div>
                           </div>
@@ -565,7 +775,7 @@ const App: React.FC = () => {
                               onClick={() => setStep(2)} 
                               className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide"
                           >
-                              Next: Select Product
+                              Next: Delivery Details
                           </button>
                       )}
                       </div>
@@ -573,31 +783,81 @@ const App: React.FC = () => {
                       {/* STEP 2: DETAILS */}
                       <div className={`transition-opacity ${step !== 2 ? 'opacity-50 pointer-events-none hidden' : ''}`}>
                       <div className="flex justify-between items-center mb-6">
-                          <label className="block text-xs font-bold text-slate-500 uppercase">Step 2: Delivery Details</label>
+                          <label className="block text-xs font-bold text-slate-500 uppercase">Step 2: Transaction Details</label>
                           <button onClick={() => setStep(1)} className="text-xs text-slate-400 underline">Back</button>
                       </div>
 
                       <div className="space-y-6">
-                          <div>
-                              <div className="flex justify-between items-end mb-2">
-                                  <label className="block text-sm font-bold text-slate-800">Prescribing HCP</label>
-                                  <button 
-                                    onClick={() => setShowHCPModal(true)}
-                                    className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
-                                  >
-                                      <Plus className="w-3 h-3" /> New Doctor
-                                  </button>
-                              </div>
-                              <select 
-                                  className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                  value={selectedHCP}
-                                  onChange={e => setSelectedHCP(e.target.value)}
-                              >
-                                  <option value="">-- Select Doctor --</option>
-                                  {hcps.map(h => (
-                                      <option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>
-                                  ))}
-                              </select>
+                          {/* Row 1 */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-800 mb-1">Delivery Date</label>
+                                    <input 
+                                        type="date"
+                                        required
+                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
+                                        value={deliveryDate}
+                                        onChange={e => setDeliveryDate(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-800 mb-1">From Custody (Source)</label>
+                                    <select 
+                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
+                                        value={selectedCustody}
+                                        onChange={e => setSelectedCustody(e.target.value)}
+                                    >
+                                        <option value="">-- Select Source --</option>
+                                        {custodies.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                                        ))}
+                                    </select>
+                                </div>
+                          </div>
+                          
+                          {/* Row 2 */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <div className="flex justify-between items-end mb-1">
+                                        <label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label>
+                                        <button 
+                                            onClick={() => setShowHCPModal(true)}
+                                            className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
+                                        >
+                                            <Plus className="w-3 h-3" /> New
+                                        </button>
+                                    </div>
+                                    <select 
+                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
+                                        value={selectedHCP}
+                                        onChange={e => setSelectedHCP(e.target.value)}
+                                    >
+                                        <option value="">-- Select Doctor --</option>
+                                        {hcps.map(h => (
+                                            <option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label>
+                                    <input 
+                                        type="date"
+                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
+                                        value={rxDate}
+                                        onChange={e => setRxDate(e.target.value)}
+                                    />
+                                </div>
+                          </div>
+
+                           {/* Row 3 */}
+                           <div>
+                                <label className="block text-sm font-bold text-slate-800 mb-1">Educator Data Submission Date</label>
+                                <input 
+                                    type="date"
+                                    className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
+                                    value={educatorDate}
+                                    onChange={e => setEducatorDate(e.target.value)}
+                                />
                           </div>
 
                           <div>
@@ -654,21 +914,25 @@ const App: React.FC = () => {
                   description="Full delivery logs are strictly confidential and available only to authorized admin." 
                 />
             ) : (
-              <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500">
-                  <table className="w-full text-left">
+              <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto">
+                  <table className="w-full text-left min-w-[800px]">
                   <thead className="bg-slate-50 border-b border-slate-200">
                       <tr>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product</th>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th>
+                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source</th>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 text-right">Status</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                       {deliveries.map(d => (
                       <tr key={d.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td>
+                          <td className="px-6 py-4 font-mono text-sm text-slate-600">
+                              {formatDateFriendly(d.delivery_date)}
+                              {d.rx_date && <div className="text-[10px] text-slate-400 mt-1">Rx: {formatDateFriendly(d.rx_date)}</div>}
+                          </td>
                           <td className="px-6 py-4">
                               <div className="font-bold text-slate-800">{d.patient?.full_name}</div>
                               <div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div>
@@ -679,6 +943,7 @@ const App: React.FC = () => {
                               </span>
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600">{d.custody?.name || '-'}</td>
                           <td className="px-6 py-4 text-right">
                               <span className="text-xs font-bold text-green-600 uppercase tracking-wider flex items-center justify-end gap-1">
                                   <CheckCircle className="w-3 h-3" /> Delivered
