@@ -64,6 +64,20 @@ export const dataService = {
     }
   },
 
+  async createHCP(hcp: Omit<HCP, 'id'>): Promise<HCP> {
+    if (isSupabaseConfigured() && supabase) {
+        const { data, error } = await supabase.from('hcps').insert([hcp]).select().single();
+        if (error) throw error;
+        return data;
+    } else {
+        const hcps: HCP[] = JSON.parse(localStorage.getItem(KEYS.HCPS) || JSON.stringify(MOCK_HCPS));
+        const newHCP = { ...hcp, id: uuidv4() };
+        hcps.push(newHCP);
+        localStorage.setItem(KEYS.HCPS, JSON.stringify(hcps));
+        return newHCP;
+    }
+  },
+
   // --- DELIVERIES ---
   async getDeliveries(): Promise<Delivery[]> {
     if (isSupabaseConfigured() && supabase) {

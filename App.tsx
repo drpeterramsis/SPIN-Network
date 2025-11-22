@@ -20,15 +20,18 @@ import {
   Syringe,
   Lock,
   ShieldCheck,
-  BarChart3
+  BarChart3,
+  UserCircle,
+  Stethoscope
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
+import { ProfileModal } from './components/ProfileModal';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v1.0.6",
-  version: "1.0.6"
+  name: "SPIN v2.0.001",
+  version: "2.0.001"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'history';
@@ -44,6 +47,7 @@ const App: React.FC = () => {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [hcps, setHcps] = useState<HCP[]>([]);
   const [showAIModal, setShowAIModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   // Delivery Form States
   const [step, setStep] = useState(1);
@@ -53,6 +57,10 @@ const App: React.FC = () => {
   const [selectedHCP, setSelectedHCP] = useState('');
   const [selectedProduct, setSelectedProduct] = useState(PRODUCTS[0].id);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
+
+  // HCP Creation State
+  const [showHCPModal, setShowHCPModal] = useState(false);
+  const [newHCP, setNewHCP] = useState({ full_name: '', specialty: '', hospital: '' });
 
   // Initialization
   useEffect(() => {
@@ -122,6 +130,23 @@ const App: React.FC = () => {
     setFoundPatient(newP);
   };
 
+  const handleCreateHCP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newHCP.full_name || !newHCP.hospital) return;
+    
+    try {
+        const created = await dataService.createHCP(newHCP);
+        setHcps([...hcps, created]);
+        setSelectedHCP(created.id); // Auto select
+        setShowHCPModal(false);
+        setNewHCP({ full_name: '', specialty: '', hospital: '' });
+        alert("Doctor registered successfully!");
+    } catch (error) {
+        console.error(error);
+        alert("Failed to register doctor.");
+    }
+  };
+
   const handleSubmitDelivery = async () => {
     if (!foundPatient || !selectedHCP || !selectedProduct) return;
     
@@ -178,6 +203,76 @@ const App: React.FC = () => {
         onLogin={setUser} 
       />
 
+      {user && (
+        <ProfileModal
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+          user={user}
+          onLogout={() => {
+            setUser(null);
+            setShowProfileModal(false);
+          }}
+        />
+      )}
+
+      {/* NEW HCP MODAL */}
+      {showHCPModal && (
+        <div 
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
+            onClick={() => setShowHCPModal(false)}
+        >
+            <div 
+                className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="bg-black p-4 flex items-center gap-3">
+                     <Stethoscope className="w-5 h-5 text-[#FFC600]" />
+                     <h3 className="text-white font-bold">Register New Doctor</h3>
+                </div>
+                <form onSubmit={handleCreateHCP} className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label>
+                        <input 
+                            required
+                            type="text" 
+                            placeholder="Dr. Name"
+                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
+                            value={newHCP.full_name}
+                            onChange={e => setNewHCP({...newHCP, full_name: e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label>
+                        <input 
+                            type="text" 
+                            placeholder="e.g. Endocrinology"
+                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
+                            value={newHCP.specialty}
+                            onChange={e => setNewHCP({...newHCP, specialty: e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital / Clinic</label>
+                        <input 
+                            required
+                            type="text" 
+                            placeholder="Hospital Name"
+                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
+                            value={newHCP.hospital}
+                            onChange={e => setNewHCP({...newHCP, hospital: e.target.value})}
+                        />
+                    </div>
+                    <button 
+                        type="submit" 
+                        className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide"
+                    >
+                        Add to Directory
+                    </button>
+                </form>
+            </div>
+        </div>
+      )}
+
       {/* NAVBAR */}
       <nav className="bg-black text-white sticky top-0 z-40 shadow-md border-b-4 border-[#FFC600] shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -195,9 +290,13 @@ const App: React.FC = () => {
             <div className="flex items-center gap-4">
               {user ? (
                   <>
-                    <span className="hidden md:block text-xs font-bold text-slate-400 uppercase tracking-wider mr-2">
+                    <button 
+                      onClick={() => setShowProfileModal(true)}
+                      className="hidden md:flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider hover:text-[#FFC600] transition-colors"
+                    >
+                        <UserCircle className="w-4 h-4" />
                         {user.email}
-                    </span>
+                    </button>
                     <button onClick={() => setShowAIModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded transition-colors border border-slate-700 text-[#FFC600]">
                         <Sparkles className="w-3 h-3" /> Intelligence
                     </button>
@@ -442,7 +541,15 @@ const App: React.FC = () => {
 
                       <div className="space-y-6">
                           <div>
-                              <label className="block text-sm font-bold text-slate-800 mb-2">Prescribing HCP</label>
+                              <div className="flex justify-between items-end mb-2">
+                                  <label className="block text-sm font-bold text-slate-800">Prescribing HCP</label>
+                                  <button 
+                                    onClick={() => setShowHCPModal(true)}
+                                    className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
+                                  >
+                                      <Plus className="w-3 h-3" /> New Doctor
+                                  </button>
+                              </div>
                               <select 
                                   className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
                                   value={selectedHCP}
