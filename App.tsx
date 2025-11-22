@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Auth } from './components/Auth';
 import { dataService } from './services/dataService';
 import { formatDateFriendly, getTodayString } from './utils/time';
-import { Delivery, Patient, HCP, Custody, PRODUCTS } from './types';
+import { Delivery, Patient, HCP, Custody, PRODUCTS, StockTransaction } from './types';
 import { 
   LogOut, 
   LogIn,
@@ -29,7 +29,8 @@ import {
   Briefcase,
   Store,
   X,
-  Undo2
+  Undo2,
+  History
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -37,12 +38,12 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.007",
-  version: "2.0.007"
+  name: "SPIN v2.0.008",
+  version: "2.0.008"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
-type DBView = 'deliveries' | 'hcps' | 'locations';
+type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
@@ -57,6 +58,7 @@ const App: React.FC = () => {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [hcps, setHcps] = useState<HCP[]>([]);
   const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([]);
   const [repCustody, setRepCustody] = useState<Custody | null>(null);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -121,16 +123,18 @@ const App: React.FC = () => {
   const loadData = useCallback(async () => {
     if (!user) return; // Don't fetch data if not logged in
     try {
-      const [d, h, c, repC] = await Promise.all([
+      const [d, h, c, repC, s] = await Promise.all([
         dataService.getDeliveries(),
         dataService.getHCPs(),
         dataService.getCustodies(),
-        dataService.getRepCustody()
+        dataService.getRepCustody(),
+        dataService.getStockTransactions()
       ]);
       setDeliveries(d);
       setHcps(h);
       setCustodies(c);
       setRepCustody(repC);
+      setStockTransactions(s);
       
       // Extract unique educators for suggestions
       const educators = Array.from(new Set(d.map(item => item.educator_name).filter(Boolean))) as string[];
@@ -176,6 +180,7 @@ const App: React.FC = () => {
         setDeliveries([]);
         setHcps([]);
         setCustodies([]);
+        setStockTransactions([]);
         setUserProfile(null);
     }
   }, [user, loadData]);
@@ -282,40 +287,38 @@ const App: React.FC = () => {
       setActiveTab('database');
       setDbView('deliveries');
     } catch (e) {
-      alert("Failed to log delivery");
+      alert("Failed to log delivery: " + e);
     }
   };
 
   // Custody Actions
   const handleReceiveStock = async (e: React.FormEvent) => {
       e.preventDefault();
-      let targetRep = repCustody;
-      if (!targetRep) {
-          try {
-             targetRep = await dataService.getRepCustody();
-             setRepCustody(targetRep);
-          } catch (err) {
-             alert("Could not initialize My Inventory. Please check connection.");
-             return;
-          }
-      }
-
-      const { quantity, educatorName } = receiveForm;
-      if (!quantity) {
-          alert("Please enter quantity.");
-          return;
-      }
-
       try {
-          await dataService.processStockTransaction(
-              targetRep.id,
-              Number(quantity),
-              getTodayString(),
-              `Educator: ${educatorName || 'Unknown'}`
-          );
-          alert("Stock received successfully into My Inventory.");
-          setReceiveForm({ quantity: 0, educatorName: '' });
-          loadData();
+        // Force refresh rep custody before adding
+        let targetRep = await dataService.getRepCustody();
+        
+        if (!targetRep) {
+            alert("Could not initialize My Inventory. Please check connection.");
+            return;
+        }
+        setRepCustody(targetRep);
+
+        const { quantity, educatorName } = receiveForm;
+        if (!quantity) {
+            alert("Please enter quantity.");
+            return;
+        }
+
+        await dataService.processStockTransaction(
+            targetRep.id,
+            Number(quantity),
+            getTodayString(),
+            `Educator: ${educatorName || 'Unknown'}`
+        );
+        alert("Stock received successfully into My Inventory.");
+        setReceiveForm({ quantity: 0, educatorName: '' });
+        loadData();
       } catch (err: any) {
           alert("Error: " + err.message);
       }
@@ -334,8 +337,12 @@ const App: React.FC = () => {
         let sourceLabel = `Educator: ${educatorName || 'Unknown'}`;
 
         if (sourceType === 'rep') {
-            if (!repCustody) throw new Error("Rep custody not found");
-            fromCustodyId = repCustody.id;
+            if (!repCustody) {
+                 const r = await dataService.getRepCustody();
+                 setRepCustody(r);
+                 if(!r) throw new Error("Rep custody not found");
+            }
+            fromCustodyId = repCustody?.id;
             sourceLabel = 'Medical Rep Transfer';
         }
 
@@ -470,7 +477,7 @@ const App: React.FC = () => {
                                 <button 
                                     key={tag}
                                     type="button" 
-                                    onClick={() => setNewHCP(prev => ({...prev, hospital: tag}))}
+                                    onClick={() => setNewHCP(prev => ({...prev, hospital: prev.hospital ? `${prev.hospital} ${tag}` : tag}))}
                                     className="text-[10px] uppercase font-bold px-2 py-1 bg-slate-100 hover:bg-[#FFC600] hover:text-black rounded border border-slate-200 transition-colors"
                                 >
                                     {tag}
@@ -894,7 +901,7 @@ const App: React.FC = () => {
                   {/* Cancel Button */}
                   <button 
                     onClick={handleCancelDelivery}
-                    className="absolute top-4 right-4 text-slate-400 hover:text-white z-10 bg-slate-800/50 hover:bg-red-600 p-2 rounded-full transition-colors"
+                    className="absolute top-4 right-4 text-slate-400 hover:text-red-500 z-10 bg-slate-800/50 hover:bg-red-50 p-2 rounded-full transition-colors border border-transparent hover:border-red-200"
                     title="Cancel Transaction"
                   >
                       <X className="w-4 h-4" />
@@ -1009,7 +1016,7 @@ const App: React.FC = () => {
                                 </div>
                                 <div>
                                     <div className="flex justify-between items-end mb-1">
-                                        <label className="block text-sm font-bold text-slate-800">From Custody (Source)</label>
+                                        <label className="block text-sm font-bold text-slate-800">From Custody (Source) <span className="text-red-500">*</span></label>
                                         <button 
                                             onClick={() => setShowClinicModal(true)}
                                             className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
@@ -1071,7 +1078,7 @@ const App: React.FC = () => {
                            {/* Row 3: Educator Info */}
                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name</label>
+                                    <label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label>
                                     <input 
                                         type="text"
                                         placeholder="Name"
@@ -1084,7 +1091,7 @@ const App: React.FC = () => {
                                         {educatorSuggestions.map((name, i) => <option key={i} value={name} />)}
                                     </datalist>
                                     <div className="flex flex-wrap gap-1 mt-1">
-                                        {educatorSuggestions.slice(0, 3).map(s => (
+                                        {educatorSuggestions.slice(0, 6).map(s => (
                                             <button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>
                                         ))}
                                     </div>
@@ -1139,15 +1146,18 @@ const App: React.FC = () => {
             ) : (
               <div className="space-y-6">
                   {/* Sub Navigation */}
-                  <div className="flex gap-4 border-b border-slate-200 pb-2">
-                      <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
+                  <div className="flex gap-4 border-b border-slate-200 pb-2 overflow-x-auto">
+                      <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
                           Transactions
                       </button>
-                      <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
+                      <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
                           Doctors (HCPs)
                       </button>
-                      <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
+                      <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
                           Locations
+                      </button>
+                      <button onClick={() => setDbView('stock')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
+                          Stock History
                       </button>
                   </div>
 
@@ -1250,6 +1260,39 @@ const App: React.FC = () => {
                                     </tbody>
                                 </table>
                            </div>
+                       </div>
+                  )}
+
+                  {dbView === 'stock' && (
+                      <div className="space-y-4 animate-in fade-in">
+                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 border-b border-slate-200">
+                                        <tr>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Custody</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Change</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Reason</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {stockTransactions.map(s => {
+                                            const custody = custodies.find(c => c.id === s.custody_id);
+                                            return (
+                                                <tr key={s.id}>
+                                                    <td className="px-6 py-4 text-slate-600 font-mono text-sm">{formatDateFriendly(s.transaction_date)}</td>
+                                                    <td className="px-6 py-4 font-bold text-slate-800">{custody?.name || s.custody_id}</td>
+                                                    <td className={`px-6 py-4 font-mono font-bold ${s.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                        {s.quantity > 0 ? '+' : ''}{s.quantity}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-slate-600 text-sm">{s.source}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                           </div>
+                           {stockTransactions.length === 0 && <div className="text-center text-slate-400 p-8">No stock history available</div>}
                        </div>
                   )}
               </div>

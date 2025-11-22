@@ -31,9 +31,9 @@ export const dataService = {
         .from('patients')
         .select('*')
         .or(`national_id.eq.${query},phone_number.eq.${query}`)
-        .single();
+        .maybeSingle();
       
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error) throw error;
       return data;
     } else {
       const patients: Patient[] = JSON.parse(localStorage.getItem(KEYS.PATIENTS) || '[]');
@@ -88,7 +88,6 @@ export const dataService = {
   // --- CUSTODY & STOCK ---
   async getCustodies(): Promise<Custody[]> {
     if (isSupabaseConfigured() && supabase) {
-        // Changed from 'custody' to 'custodies' to match standard schema conventions and fix "table not found" errors
         const { data, error } = await supabase.from('custodies').select('*').order('created_at');
         if (error) throw error;
         return data;
@@ -103,17 +102,28 @@ export const dataService = {
   },
 
   async getRepCustody(): Promise<Custody> {
-      const custodies = await this.getCustodies();
+      let custodies: Custody[] = [];
+      try {
+          custodies = await this.getCustodies();
+      } catch (e) {
+          console.error("Failed to load custodies", e);
+      }
+
       let rep = custodies.find(c => c.type === 'rep');
+      
+      // If no rep custody found, create it immediately
       if (!rep) {
-          // Create default rep custody if missing
-          // Ensure this creates in the DB if connected
           try {
+              // Create default rep custody
               rep = await this.createCustody({ name: 'My Inventory', type: 'rep', created_at: new Date().toISOString() });
           } catch (e) {
               console.error("Failed to auto-create rep custody", e);
-              // Fallback for UI to prevent crash, though operations might fail if not persisted
-              rep = { id: 'temp-rep', name: 'My Inventory (Temp)', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
+              if (!isSupabaseConfigured()) {
+                  // Fallback for Demo
+                  rep = { id: 'temp-rep', name: 'My Inventory (Temp)', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
+              } else {
+                  throw new Error("Could not initialize Rep Inventory in Database. Please check table 'custodies' exists.");
+              }
           }
       }
       return rep;
@@ -121,7 +131,6 @@ export const dataService = {
 
   async createCustody(custody: Omit<Custody, 'id' | 'current_stock'>): Promise<Custody> {
       if (isSupabaseConfigured() && supabase) {
-          // Changed table from 'custody' to 'custodies'
           const { data, error } = await supabase.from('custodies').insert([custody]).select().single();
           if (error) throw error;
           return data;
@@ -145,14 +154,42 @@ export const dataService = {
     fromCustodyId?: string
   ): Promise<void> {
      if (isSupabaseConfigured() && supabase) {
-         // Log transaction
-         await supabase.from('stock_transactions').insert([{
+         // 1. Log Transaction (Inbound)
+         const { error: errIn } = await supabase.from('stock_transactions').insert([{
              custody_id: toCustodyId,
              quantity: quantity,
              transaction_date: date,
              source: fromCustodyId ? `Transfer from ${fromCustodyId}` : sourceLabel
          }]);
-         // In real Supabase implementation, triggers handle simple integer increment/decrement
+         if (errIn) throw errIn;
+
+         // 2. Update Stock for Receiver
+         // Note: This is not atomic without RPC, but acceptable for this scope
+         const { data: toCustody } = await supabase.from('custodies').select('current_stock').eq('id', toCustodyId).single();
+         if (toCustody) {
+            const newStock = (toCustody.current_stock || 0) + quantity;
+            await supabase.from('custodies').update({ current_stock: newStock }).eq('id', toCustodyId);
+         }
+
+         // 3. Handle Sender (Outbound)
+         if (fromCustodyId) {
+            // Log Transaction (Outbound)
+            const { error: errOut } = await supabase.from('stock_transactions').insert([{
+                custody_id: fromCustodyId,
+                quantity: -quantity,
+                transaction_date: date,
+                source: `Transfer to ${toCustodyId}`
+            }]);
+            if (errOut) throw errOut;
+
+            // Update Stock for Sender
+            const { data: fromCustody } = await supabase.from('custodies').select('current_stock').eq('id', fromCustodyId).single();
+            if (fromCustody) {
+                const newStock = Math.max(0, (fromCustody.current_stock || 0) - quantity);
+                await supabase.from('custodies').update({ current_stock: newStock }).eq('id', fromCustodyId);
+            }
+         }
+
      } else {
          // 1. Load Data
          const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || JSON.stringify(MOCK_CUSTODY));
@@ -199,6 +236,18 @@ export const dataService = {
      }
   },
 
+  async getStockTransactions(): Promise<StockTransaction[]> {
+      if (isSupabaseConfigured() && supabase) {
+          const { data, error } = await supabase.from('stock_transactions')
+            .select('*')
+            .order('transaction_date', { ascending: false });
+          if (error) throw error;
+          return data;
+      } else {
+          return JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+      }
+  },
+
   // --- DELIVERIES ---
   async getDeliveries(): Promise<Delivery[]> {
     if (isSupabaseConfigured() && supabase) {
@@ -232,15 +281,11 @@ export const dataService = {
 
   async checkDuplicateDelivery(patientId: string, productId: string): Promise<boolean> {
     if (isSupabaseConfigured() && supabase) {
+      // Check last 30 days for same patient
       const { data } = await supabase
         .from('deliveries')
         .select('id')
         .eq('patient_id', patientId)
-        //.eq('product_id', productId) // Strict product check or any delivery? Prompt implies "check no duplications" in general or for product. 
-        // Keeping product check for now, but UI might want broader.
-        // Prompt: "check no duplications and if found check the reason to recive another pen for another product" implies strictness on patient.
-        // Let's check ANY delivery in last 30 days maybe? Or just any delivery. 
-        // For now, sticking to existing logic but relaxed slightly to just patient check if needed.
         .limit(1);
       return (data && data.length > 0);
     } else {
@@ -253,6 +298,23 @@ export const dataService = {
     if (isSupabaseConfigured() && supabase) {
       const { data, error } = await supabase.from('deliveries').insert([delivery]).select().single();
       if (error) throw error;
+      
+      // Deduct from source custody in Supabase
+      if (delivery.custody_id) {
+          const { data: custody } = await supabase.from('custodies').select('current_stock').eq('id', delivery.custody_id).single();
+          if (custody) {
+              const newStock = Math.max(0, (custody.current_stock || 0) - delivery.quantity);
+              await supabase.from('custodies').update({ current_stock: newStock }).eq('id', delivery.custody_id);
+              
+              // Log stock deduction
+              await supabase.from('stock_transactions').insert([{
+                  custody_id: delivery.custody_id,
+                  quantity: -delivery.quantity,
+                  transaction_date: delivery.delivery_date,
+                  source: `Delivery to Patient: ${delivery.patient_id}`
+              }]);
+          }
+      }
       return data;
     } else {
       const deliveries: Delivery[] = JSON.parse(localStorage.getItem(KEYS.DELIVERIES) || '[]');
