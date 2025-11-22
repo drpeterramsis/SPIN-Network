@@ -16,7 +16,7 @@ import {
   AlertTriangle,
   CheckCircle,
   LayoutDashboard,
-  History,
+  Database,
   Syringe,
   Lock,
   ShieldCheck,
@@ -28,7 +28,8 @@ import {
   ArrowLeftRight,
   Briefcase,
   Store,
-  X
+  X,
+  Undo2
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -36,11 +37,12 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.006",
-  version: "2.0.006"
+  name: "SPIN v2.0.007",
+  version: "2.0.007"
 };
 
-type Tab = 'dashboard' | 'deliver' | 'custody' | 'history';
+type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
+type DBView = 'deliveries' | 'hcps' | 'locations';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
@@ -49,6 +51,7 @@ const App: React.FC = () => {
   const [showLoginModal, setShowLoginModal] = useState(false);
   
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [dbView, setDbView] = useState<DBView>('deliveries');
   
   // Data States
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
@@ -61,6 +64,7 @@ const App: React.FC = () => {
   // Delivery Form States
   const [step, setStep] = useState(1);
   const [nidSearch, setNidSearch] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
   const [foundPatient, setFoundPatient] = useState<Patient | null>(null);
   const [newPatientForm, setNewPatientForm] = useState({ full_name: '', phone_number: '' });
   
@@ -71,6 +75,7 @@ const App: React.FC = () => {
   const [deliveryDate, setDeliveryDate] = useState(getTodayString());
   const [rxDate, setRxDate] = useState('');
   const [educatorName, setEducatorName] = useState('');
+  const [educatorSuggestions, setEducatorSuggestions] = useState<string[]>([]);
   const [educatorDate, setEducatorDate] = useState('');
   
   const [duplicateWarning, setDuplicateWarning] = useState(false);
@@ -126,6 +131,11 @@ const App: React.FC = () => {
       setHcps(h);
       setCustodies(c);
       setRepCustody(repC);
+      
+      // Extract unique educators for suggestions
+      const educators = Array.from(new Set(d.map(item => item.educator_name).filter(Boolean))) as string[];
+      setEducatorSuggestions(educators);
+
     } catch (error) {
       console.error("Load error", error);
     }
@@ -170,9 +180,20 @@ const App: React.FC = () => {
     }
   }, [user, loadData]);
 
+  // Auto-select Rep Custody in Delivery Step 2
+  useEffect(() => {
+      if (step === 2 && !selectedCustody && repCustody) {
+          setSelectedCustody(repCustody.id);
+      }
+  }, [step, repCustody, selectedCustody]);
+
   // Form Logic
   const handlePatientSearch = async () => {
-    if (nidSearch.length < 3) return;
+    if (nidSearch.length < 3) {
+        alert("Please enter at least 3 characters");
+        return;
+    }
+    setHasSearched(true);
     const p = await dataService.searchPatient(nidSearch);
     setFoundPatient(p);
     if (p) {
@@ -194,6 +215,20 @@ const App: React.FC = () => {
     setFoundPatient(newP);
   };
 
+  const handleCancelDelivery = () => {
+      if(window.confirm("Are you sure you want to cancel this transaction? All data will be lost.")) {
+        setStep(1);
+        setFoundPatient(null);
+        setNidSearch('');
+        setHasSearched(false);
+        setNewPatientForm({ full_name: '', phone_number: '' });
+        setDuplicateWarning(false);
+        setEducatorName('');
+        setEducatorDate('');
+        setRxDate('');
+      }
+  };
+
   const handleCreateHCP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newHCP.full_name || !newHCP.hospital) return;
@@ -212,10 +247,12 @@ const App: React.FC = () => {
   };
 
   const handleSubmitDelivery = async () => {
-    if (!foundPatient || !selectedHCP || !selectedProduct || !selectedCustody || !educatorName) {
-      alert("Please fill in all required fields including Reported Educator");
-      return;
-    }
+    // Explicit validation
+    if (!foundPatient) { alert("No patient selected"); return; }
+    if (!selectedHCP) { alert("Please select a Prescribing Doctor"); return; }
+    if (!selectedProduct) { alert("Please select a Product"); return; }
+    if (!selectedCustody) { alert("Please select the Source Custody (My Inventory or Clinic)"); return; }
+    if (!educatorName) { alert("Please enter the Reported Educator Name"); return; }
     
     try {
       await dataService.logDelivery({
@@ -236,12 +273,14 @@ const App: React.FC = () => {
       setStep(1);
       setNidSearch('');
       setFoundPatient(null);
+      setHasSearched(false);
       setNewPatientForm({ full_name: '', phone_number: '' });
       setRxDate('');
       setEducatorDate('');
       setEducatorName('');
       loadData();
-      setActiveTab('history');
+      setActiveTab('database');
+      setDbView('deliveries');
     } catch (e) {
       alert("Failed to log delivery");
     }
@@ -250,10 +289,17 @@ const App: React.FC = () => {
   // Custody Actions
   const handleReceiveStock = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!repCustody) {
-          alert("Rep Custody not initialized.");
-          return;
+      let targetRep = repCustody;
+      if (!targetRep) {
+          try {
+             targetRep = await dataService.getRepCustody();
+             setRepCustody(targetRep);
+          } catch (err) {
+             alert("Could not initialize My Inventory. Please check connection.");
+             return;
+          }
       }
+
       const { quantity, educatorName } = receiveForm;
       if (!quantity) {
           alert("Please enter quantity.");
@@ -262,7 +308,7 @@ const App: React.FC = () => {
 
       try {
           await dataService.processStockTransaction(
-              repCustody.id,
+              targetRep.id,
               Number(quantity),
               getTodayString(),
               `Educator: ${educatorName || 'Unknown'}`
@@ -318,7 +364,11 @@ const App: React.FC = () => {
         // Update list and select the new one
         const updatedCustodies = await dataService.getCustodies();
         setCustodies(updatedCustodies);
-        setTransferForm(prev => ({ ...prev, toCustodyId: created.id }));
+        if(activeTab === 'deliver') {
+            setSelectedCustody(created.id);
+        } else {
+            setTransferForm(prev => ({ ...prev, toCustodyId: created.id }));
+        }
     } catch (err: any) {
         alert("Failed to add clinic: " + err.message);
     }
@@ -415,6 +465,18 @@ const App: React.FC = () => {
                             value={newHCP.hospital}
                             onChange={e => setNewHCP({...newHCP, hospital: e.target.value})}
                         />
+                        <div className="flex flex-wrap gap-2 mt-2">
+                            {['Private Clinic', 'Poly Clinic', 'General Hospital', 'Medical Center'].map(tag => (
+                                <button 
+                                    key={tag}
+                                    type="button" 
+                                    onClick={() => setNewHCP(prev => ({...prev, hospital: tag}))}
+                                    className="text-[10px] uppercase font-bold px-2 py-1 bg-slate-100 hover:bg-[#FFC600] hover:text-black rounded border border-slate-200 transition-colors"
+                                >
+                                    {tag}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                     <button 
                         type="submit" 
@@ -531,7 +593,7 @@ const App: React.FC = () => {
               { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
               { id: 'deliver', label: 'Deliver Pen', icon: Syringe },
               { id: 'custody', label: 'Custody', icon: Building2 },
-              { id: 'history', label: 'History', icon: History },
+              { id: 'database', label: 'Database', icon: Database },
             ].map(t => (
               <button
                 key={t.id}
@@ -680,7 +742,11 @@ const App: React.FC = () => {
                                         className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40"
                                         value={receiveForm.educatorName}
                                         onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
+                                        list="educator-suggestions"
                                     />
+                                    <datalist id="educator-suggestions">
+                                        {educatorSuggestions.map((name, i) => <option key={i} value={name} />)}
+                                    </datalist>
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
@@ -707,9 +773,14 @@ const App: React.FC = () => {
                         <div className="lg:col-span-2 bg-white shadow-sm border border-slate-200">
                             <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                                 <h3 className="font-bold text-slate-800 flex items-center gap-2"><Store className="w-5 h-5" /> Clinic / Pharmacy Network</h3>
-                                <span className="text-xs font-bold bg-slate-200 px-2 py-1 rounded text-slate-600">{custodies.filter(c => c.type === 'clinic').length} Locations</span>
+                                <div className="flex items-center gap-3">
+                                    <button onClick={() => setShowClinicModal(true)} className="text-xs font-bold uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                                        <Plus className="w-3 h-3" /> Add Clinic
+                                    </button>
+                                    <span className="text-xs font-bold bg-slate-200 px-2 py-1 rounded text-slate-600">{custodies.filter(c => c.type === 'clinic').length} Locations</span>
+                                </div>
                             </div>
-                            <div className="divide-y divide-slate-100">
+                            <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto custom-scrollbar">
                                 {custodies.filter(c => c.type === 'clinic').map(clinic => (
                                     <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group flex justify-between items-center">
                                         <div>
@@ -743,34 +814,6 @@ const App: React.FC = () => {
 
                         {/* Right: Actions */}
                         <div className="space-y-6">
-                            
-                            {/* Register Clinic (Inline removed, moved to modal via Supply form) */}
-                            {/* Keeping Inline for existing user familiarity? No, prompt asked for direct add from list. I'll focus on the supply form. */}
-                            <div className="bg-white shadow-sm border border-slate-200 p-6">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h3 className="text-sm font-bold uppercase text-slate-500 flex items-center gap-2"><Plus className="w-4 h-4" /> New Location</h3>
-                                </div>
-                                <form onSubmit={handleAddClinic} className="space-y-4">
-                                    <input 
-                                        type="text"
-                                        className="w-full border p-2 bg-slate-50 text-sm font-bold"
-                                        placeholder="Clinic / Pharmacy Name"
-                                        value={newClinicForm.name}
-                                        onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})}
-                                        required
-                                    />
-                                    <div className="flex gap-2">
-                                        <input 
-                                            type="date" 
-                                            className="w-full border p-2 bg-slate-50 text-sm"
-                                            value={newClinicForm.date}
-                                            onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})}
-                                        />
-                                        <button type="submit" className="bg-black text-white px-4 font-bold uppercase text-xs">Add</button>
-                                    </div>
-                                </form>
-                            </div>
-
                             {/* Transfer / Supply Stock */}
                             <div className="bg-white shadow-sm border-l-4 border-blue-500 p-6">
                                 <h3 className="text-sm font-bold mb-4 uppercase text-blue-900 flex items-center gap-2"><ArrowLeftRight className="w-4 h-4" /> Supply Clinic</h3>
@@ -846,7 +889,17 @@ const App: React.FC = () => {
                   description="You must be a registered distributor or HCP to log new deliveries." 
                 />
             ) : (
-              <div className="bg-white shadow-lg border-t-4 border-[#FFC600] max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-500">
+              <div className="bg-white shadow-lg border-t-4 border-[#FFC600] max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-500 relative">
+                  
+                  {/* Cancel Button */}
+                  <button 
+                    onClick={handleCancelDelivery}
+                    className="absolute top-4 right-4 text-slate-400 hover:text-white z-10 bg-slate-800/50 hover:bg-red-600 p-2 rounded-full transition-colors"
+                    title="Cancel Transaction"
+                  >
+                      <X className="w-4 h-4" />
+                  </button>
+
                   <div className="bg-slate-900 text-white px-8 py-6">
                       <h2 className="text-xl font-bold flex items-center gap-2">
                       <Syringe className="w-5 h-5 text-[#FFC600]" />
@@ -866,6 +919,7 @@ const App: React.FC = () => {
                               className="flex-1 border border-slate-300 p-3 bg-slate-50 font-mono focus:ring-2 focus:ring-[#FFC600] outline-none"
                               value={nidSearch}
                               onChange={(e) => setNidSearch(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && handlePatientSearch()}
                           />
                           <button 
                               onClick={handlePatientSearch}
@@ -876,19 +930,19 @@ const App: React.FC = () => {
                       </div>
 
                       {foundPatient ? (
-                          <div className="bg-green-50 border border-green-200 p-4 mb-6">
+                          <div className="bg-green-50 border border-green-200 p-4 mb-6 animate-in fade-in">
                               <div className="flex items-start gap-3">
                                   <CheckCircle className="w-5 h-5 text-green-600 mt-0.5" />
-                                  <div>
+                                  <div className="flex-1">
                                       <p className="font-bold text-green-800">Patient Found</p>
                                       <p className="text-sm text-green-700">{foundPatient.full_name}</p>
                                       <p className="text-xs text-green-600 font-mono">{foundPatient.national_id} | {foundPatient.phone_number}</p>
                                   </div>
                               </div>
                           </div>
-                      ) : nidSearch.length > 3 && (
-                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6">
-                              <p className="text-sm font-bold text-slate-700 mb-3">Patient not found. Register new?</p>
+                      ) : hasSearched && (
+                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6 animate-in fade-in">
+                              <p className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[#FFC600]" /> Patient not found. Register new?</p>
                               <div className="space-y-3">
                                   <input 
                                       type="text" 
@@ -904,7 +958,7 @@ const App: React.FC = () => {
                                       value={newPatientForm.phone_number}
                                       onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})}
                                   />
-                                  <button onClick={handleCreatePatient} className="text-blue-600 text-sm font-bold underline">Save New Patient</button>
+                                  <button onClick={handleCreatePatient} className="bg-black text-white px-4 py-2 text-xs font-bold uppercase">Save & Select Patient</button>
                               </div>
                           </div>
                       )}
@@ -912,7 +966,7 @@ const App: React.FC = () => {
                       {foundPatient && (
                           <>
                              {duplicateWarning && (
-                                <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
+                                <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 animate-in slide-in-from-top-2">
                                     <div className="flex items-start gap-3">
                                         <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
                                         <div>
@@ -925,9 +979,9 @@ const App: React.FC = () => {
                              )}
                              <button 
                                 onClick={() => setStep(2)} 
-                                className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide"
+                                className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2"
                              >
-                                Next: Delivery Details
+                                {duplicateWarning ? 'Acknowledge & Continue' : 'Next: Delivery Details'} <ArrowRight className="w-4 h-4" />
                              </button>
                           </>
                       )}
@@ -937,7 +991,7 @@ const App: React.FC = () => {
                       <div className={`transition-opacity ${step !== 2 ? 'opacity-50 pointer-events-none hidden' : ''}`}>
                       <div className="flex justify-between items-center mb-6">
                           <label className="block text-xs font-bold text-slate-500 uppercase">Step 2: Transaction Details</label>
-                          <button onClick={() => setStep(1)} className="text-xs text-slate-400 underline">Back</button>
+                          <button onClick={() => setStep(1)} className="text-xs text-slate-400 underline flex items-center gap-1"><Undo2 className="w-3 h-3"/> Change Patient</button>
                       </div>
 
                       <div className="space-y-6">
@@ -954,7 +1008,15 @@ const App: React.FC = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-800 mb-1">From Custody (Source)</label>
+                                    <div className="flex justify-between items-end mb-1">
+                                        <label className="block text-sm font-bold text-slate-800">From Custody (Source)</label>
+                                        <button 
+                                            onClick={() => setShowClinicModal(true)}
+                                            className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
+                                        >
+                                            <Plus className="w-3 h-3" /> Add New
+                                        </button>
+                                    </div>
                                     <select 
                                         className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
                                         value={selectedCustody}
@@ -1016,7 +1078,16 @@ const App: React.FC = () => {
                                         className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
                                         value={educatorName}
                                         onChange={e => setEducatorName(e.target.value)}
+                                        list="educator-list-delivery"
                                     />
+                                    <datalist id="educator-list-delivery">
+                                        {educatorSuggestions.map((name, i) => <option key={i} value={name} />)}
+                                    </datalist>
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                        {educatorSuggestions.slice(0, 3).map(s => (
+                                            <button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>
+                                        ))}
+                                    </div>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label>
@@ -1058,54 +1129,129 @@ const App: React.FC = () => {
             )
           )}
 
-          {/* HISTORY VIEW */}
-          {activeTab === 'history' && (
+          {/* DATABASE / HISTORY VIEW */}
+          {activeTab === 'database' && (
             !user ? (
               <LockedState 
-                  title="Distribution History Locked" 
-                  description="Full delivery logs are strictly confidential and available only to authorized admin." 
+                  title="Database Access Locked" 
+                  description="Full system records are strictly confidential and available only to authorized admin." 
                 />
             ) : (
-              <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto">
-                  <table className="w-full text-left min-w-[800px]">
-                  <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product Assigned</th>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source</th>
-                      </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                      {deliveries.map(d => (
-                      <tr key={d.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-6 py-4 font-mono text-sm text-slate-600">
-                              {formatDateFriendly(d.delivery_date)}
-                          </td>
-                          <td className="px-6 py-4">
-                              <div className="font-bold text-slate-800">{d.patient?.full_name}</div>
-                              <div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div>
-                          </td>
-                          <td className="px-6 py-4">
-                              <span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">
-                                  {getProductName(d.product_id)}
-                              </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">
-                              {d.hcp?.full_name}
-                              {d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">
-                              {d.educator_name || '-'}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{d.custody?.name || '-'}</td>
-                      </tr>
-                      ))}
-                  </tbody>
-                  </table>
-                  {deliveries.length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
+              <div className="space-y-6">
+                  {/* Sub Navigation */}
+                  <div className="flex gap-4 border-b border-slate-200 pb-2">
+                      <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
+                          Transactions
+                      </button>
+                      <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
+                          Doctors (HCPs)
+                      </button>
+                      <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
+                          Locations
+                      </button>
+                  </div>
+
+                  {dbView === 'deliveries' && (
+                    <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto">
+                        <table className="w-full text-left min-w-[800px]">
+                        <thead className="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th>
+                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th>
+                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product Assigned</th>
+                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th>
+                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th>
+                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {deliveries.map(d => (
+                            <tr key={d.id} className="hover:bg-slate-50 transition-colors">
+                                <td className="px-6 py-4 font-mono text-sm text-slate-600">
+                                    {formatDateFriendly(d.delivery_date)}
+                                </td>
+                                <td className="px-6 py-4">
+                                    <div className="font-bold text-slate-800">{d.patient?.full_name}</div>
+                                    <div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">
+                                        {getProductName(d.product_id)}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 text-sm text-slate-600">
+                                    {d.hcp?.full_name}
+                                    {d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}
+                                </td>
+                                <td className="px-6 py-4 text-sm text-slate-600">
+                                    {d.educator_name || '-'}
+                                </td>
+                                <td className="px-6 py-4 text-sm text-slate-600">{d.custody?.name || '-'}</td>
+                            </tr>
+                            ))}
+                        </tbody>
+                        </table>
+                        {deliveries.length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
+                    </div>
+                  )}
+
+                  {dbView === 'hcps' && (
+                       <div className="space-y-4 animate-in fade-in">
+                           <div className="flex justify-end">
+                               <button onClick={() => setShowHCPModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Doctor</button>
+                           </div>
+                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 border-b border-slate-200">
+                                        <tr>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {hcps.map(h => (
+                                            <tr key={h.id}>
+                                                <td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td>
+                                                <td className="px-6 py-4 text-slate-600">{h.specialty || '-'}</td>
+                                                <td className="px-6 py-4 text-slate-600">{h.hospital}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                           </div>
+                       </div>
+                  )}
+
+                  {dbView === 'locations' && (
+                      <div className="space-y-4 animate-in fade-in">
+                           <div className="flex justify-end">
+                               <button onClick={() => setShowClinicModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Location</button>
+                           </div>
+                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 border-b border-slate-200">
+                                        <tr>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Location Name</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Stock Level</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {custodies.map(c => (
+                                            <tr key={c.id}>
+                                                <td className="px-6 py-4 font-bold text-slate-800">{c.name}</td>
+                                                <td className="px-6 py-4 uppercase text-xs font-bold text-slate-500">{c.type}</td>
+                                                <td className="px-6 py-4 font-mono">{c.current_stock}</td>
+                                                <td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                           </div>
+                       </div>
+                  )}
               </div>
             )
           )}
