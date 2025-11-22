@@ -30,14 +30,15 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.001",
-  version: "2.0.001"
+  name: "SPIN v2.0.002",
+  version: "2.0.002"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'history';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [showLoginModal, setShowLoginModal] = useState(false);
   
@@ -81,7 +82,7 @@ const App: React.FC = () => {
     checkSession();
   }, []);
 
-  // Load Data
+  // Load Data & Profile
   const loadData = useCallback(async () => {
     if (!user) return; // Don't fetch data if not logged in
     try {
@@ -99,10 +100,38 @@ const App: React.FC = () => {
   useEffect(() => {
     if (user) {
         loadData();
+
+        // Fetch Profile & Validate Access on App Start/Login
+        const fetchProfile = async () => {
+            if (isSupabaseConfigured() && supabase) {
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .eq('id', user.id)
+                    .single();
+                
+                if (data) {
+                    // Security Check: Re-validate access on app load
+                    if (data.access !== 'yes') {
+                        console.warn("Access revoked. Logging out.");
+                        await supabase.auth.signOut();
+                        setUser(null);
+                        setUserProfile(null);
+                    } else {
+                        setUserProfile(data);
+                    }
+                }
+            } else {
+                // Demo Mode
+                setUserProfile({ full_name: 'Demo User', access: 'yes' });
+            }
+        };
+        fetchProfile();
     } else {
         // Clear sensitive data on logout
         setDeliveries([]);
         setHcps([]);
+        setUserProfile(null);
     }
   }, [user, loadData]);
 
@@ -388,6 +417,15 @@ const App: React.FC = () => {
               ) : (
                   // PRIVATE DASHBOARD VIEW
                   <>
+                      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                          <h1 className="text-2xl font-bold text-slate-900">
+                              Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}
+                          </h1>
+                          <p className="text-slate-500 text-sm">
+                              Here is your daily distribution overview.
+                          </p>
+                      </div>
+
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       {/* Card 1 */}
                       <div className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500">
