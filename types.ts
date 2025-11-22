@@ -32,17 +32,16 @@ export interface Custody {
   name: string;
   type: 'rep' | 'clinic';
   created_at: string;
-  // Simple key-value for stock: product_id -> quantity
-  stock?: Record<string, number>;
+  // Simplified: Custody is just "Pens", no specific product mix until delivery
+  current_stock: number; 
 }
 
 export interface StockTransaction {
   id: string;
   custody_id: string;
-  product_id: string;
-  quantity: number;
+  quantity: number; // Number of pens
   transaction_date: string;
-  source: string; // e.g., 'Warehouse', 'Educator', 'Medical Rep'
+  source: string; // e.g. 'Educator: John Doe', 'Transfer from Rep'
   notes?: string;
 }
 
@@ -50,14 +49,21 @@ export interface Delivery {
   id: string;
   patient_id: string;
   hcp_id: string; // The prescriber
-  product_id: string;
-  quantity: number;
+  
+  // Product is assigned AT delivery
+  product_id: string; 
+  
+  quantity: number; // Always 1 pen usually
   delivered_by: string; // User ID
   
   delivery_date: string;
   rx_date?: string; // Prescription Date
-  educator_submission_date?: string; // Educator Data Submission Date
-  custody_id?: string; // Source Custody ID
+  
+  custody_id?: string; // Source Custody ID (Clinic or Rep)
+  
+  // Educator Data
+  educator_name?: string; // Reported Educator Name
+  educator_submission_date?: string; // Date of report
 
   notes?: string;
   

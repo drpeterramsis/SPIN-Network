@@ -35,8 +35,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.004",
-  version: "2.0.004"
+  name: "SPIN v2.0.005",
+  version: "2.0.005"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'history';
@@ -69,6 +69,7 @@ const App: React.FC = () => {
   
   const [deliveryDate, setDeliveryDate] = useState(getTodayString());
   const [rxDate, setRxDate] = useState('');
+  const [educatorName, setEducatorName] = useState('');
   const [educatorDate, setEducatorDate] = useState('');
   
   const [duplicateWarning, setDuplicateWarning] = useState(false);
@@ -80,13 +81,12 @@ const App: React.FC = () => {
   // Custody Actions Forms
   const [transferForm, setTransferForm] = useState({ 
       toCustodyId: '', 
-      productId: PRODUCTS[0].id, 
       quantity: 0, 
       date: getTodayString(),
       sourceType: 'educator' as 'educator' | 'rep' | 'clinic',
-      customSource: 'Patient Educator'
+      educatorName: ''
   });
-  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString(), source: 'Medical Rep' });
+  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString() });
 
   // Initialization
   useEffect(() => {
@@ -171,7 +171,7 @@ const App: React.FC = () => {
     const p = await dataService.searchPatient(nidSearch);
     setFoundPatient(p);
     if (p) {
-      // Check for duplicates immediately
+      // Check for duplicates immediately (Any previous delivery)
       const isDup = await dataService.checkDuplicateDelivery(p.id, selectedProduct);
       setDuplicateWarning(isDup);
     } else {
@@ -207,8 +207,8 @@ const App: React.FC = () => {
   };
 
   const handleSubmitDelivery = async () => {
-    if (!foundPatient || !selectedHCP || !selectedProduct || !selectedCustody) {
-      alert("Please fill in all required fields including Custody Source");
+    if (!foundPatient || !selectedHCP || !selectedProduct || !selectedCustody || !educatorName) {
+      alert("Please fill in all required fields including Reported Educator");
       return;
     }
     
@@ -221,6 +221,7 @@ const App: React.FC = () => {
         quantity: 1,
         delivery_date: deliveryDate,
         rx_date: rxDate,
+        educator_name: educatorName,
         educator_submission_date: educatorDate,
         custody_id: selectedCustody
       });
@@ -233,6 +234,7 @@ const App: React.FC = () => {
       setNewPatientForm({ full_name: '', phone_number: '' });
       setRxDate('');
       setEducatorDate('');
+      setEducatorName('');
       loadData();
       setActiveTab('history');
     } catch (e) {
@@ -243,25 +245,22 @@ const App: React.FC = () => {
   // Custody Actions
   const handleStockTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { toCustodyId, productId, quantity, date, sourceType, customSource } = transferForm;
+    const { toCustodyId, quantity, date, sourceType, educatorName } = transferForm;
     if (!toCustodyId || !quantity) return;
 
     try {
         let fromCustodyId = undefined;
-        let sourceLabel = customSource;
+        let sourceLabel = `Educator: ${educatorName || 'Unknown'}`;
 
         if (sourceType === 'rep') {
             if (!repCustody) throw new Error("Rep custody not found");
             fromCustodyId = repCustody.id;
             sourceLabel = 'Medical Rep Transfer';
-        } else if (sourceType === 'clinic') {
-            // "Return from clinic" logic not fully UI implemented yet, but supported by logic
-            sourceLabel = 'Clinic Transfer';
         }
 
-        await dataService.processStockTransaction(toCustodyId, productId, Number(quantity), date, sourceLabel, fromCustodyId);
+        await dataService.processStockTransaction(toCustodyId, Number(quantity), date, sourceLabel, fromCustodyId);
         alert("Stock updated successfully");
-        setTransferForm({ ...transferForm, quantity: 0 });
+        setTransferForm({ ...transferForm, quantity: 0, educatorName: '' });
         loadData();
     } catch (err: any) {
         alert("Error: " + err.message);
@@ -435,7 +434,7 @@ const App: React.FC = () => {
             {[
               { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
               { id: 'deliver', label: 'Deliver Pen', icon: Syringe },
-              { id: 'custody', label: 'Custody & Stock', icon: Building2 },
+              { id: 'custody', label: 'Custody', icon: Building2 },
               { id: 'history', label: 'History', icon: History },
             ].map(t => (
               <button
@@ -560,32 +559,17 @@ const App: React.FC = () => {
                                 <p className="text-xs text-slate-500 mt-1 uppercase tracking-wide">Medical Rep Stock (You)</p>
                             </div>
                             <div className="text-right">
-                                <span className="text-2xl font-black text-slate-900">
-                                    {/* Fix: Explicitly type reduce arguments to avoid 'unknown' type error */}
-                                    {repCustody?.stock ? Object.values(repCustody.stock).reduce((a: number, b: number) => a + b, 0) : 0}
+                                <span className="text-5xl font-black text-slate-900 tracking-tighter">
+                                    {repCustody?.current_stock || 0}
                                 </span>
-                                <span className="text-xs text-slate-500 block">Total Units</span>
+                                <span className="text-xs text-slate-500 block uppercase font-bold mt-1">Pens Available</span>
                             </div>
-                        </div>
-                        
-                        <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {PRODUCTS.map(p => (
-                                <div key={p.id} className="bg-slate-50 p-4 rounded border border-slate-200 flex justify-between items-center">
-                                    <div>
-                                        <span className="block text-xs font-bold text-slate-400 uppercase">{p.type}</span>
-                                        <span className="font-bold text-slate-900">{p.name}</span>
-                                    </div>
-                                    <span className="text-2xl font-bold text-[#FFC600]">
-                                        {repCustody?.stock?.[p.id] || 0}
-                                    </span>
-                                </div>
-                            ))}
                         </div>
                         
                         <div className="p-6 bg-slate-900 text-white flex flex-col md:flex-row gap-4 items-center">
                             <div className="flex-1">
-                                <h3 className="font-bold text-white flex items-center gap-2"><Package className="w-4 h-4 text-[#FFC600]" /> Add Stock to My Inventory</h3>
-                                <p className="text-xs text-slate-400">Receive stock from Patient Educator or Warehouse.</p>
+                                <h3 className="font-bold text-white flex items-center gap-2"><Package className="w-4 h-4 text-[#FFC600]" /> Receive Pens</h3>
+                                <p className="text-xs text-slate-400">Add stock received from Patient Educator.</p>
                             </div>
                             <form 
                                 onSubmit={(e) => {
@@ -596,36 +580,29 @@ const App: React.FC = () => {
                                 className="flex flex-wrap gap-3 items-end w-full md:w-auto"
                             >
                                 <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Product</label>
-                                    <select 
-                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-32"
-                                        value={transferForm.productId}
-                                        onChange={e => setTransferForm({...transferForm, productId: e.target.value})}
-                                    >
-                                        {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                    </select>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source Educator</label>
+                                    <input 
+                                        type="text" 
+                                        required
+                                        placeholder="Educator Name"
+                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40"
+                                        value={transferForm.educatorName}
+                                        onChange={e => setTransferForm({...transferForm, educatorName: e.target.value})}
+                                    />
                                 </div>
                                 <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty</label>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
                                     <input 
                                         type="number" 
+                                        min="1"
                                         className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20"
                                         placeholder="0"
                                         value={transferForm.quantity}
                                         onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source</label>
-                                    <input 
-                                        type="text" 
-                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-32"
-                                        value={transferForm.customSource}
-                                        onChange={e => setTransferForm({...transferForm, customSource: e.target.value, sourceType: 'educator'})}
-                                    />
-                                </div>
                                 <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">
-                                    Add
+                                    Add to Stock
                                 </button>
                             </form>
                         </div>
@@ -642,31 +619,27 @@ const App: React.FC = () => {
                             </div>
                             <div className="divide-y divide-slate-100">
                                 {custodies.filter(c => c.type === 'clinic').map(clinic => (
-                                    <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group">
-                                        <div className="flex justify-between items-start mb-3">
-                                            <div>
-                                                <h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4>
-                                                <p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p>
-                                            </div>
-                                            <button 
-                                                onClick={() => {
-                                                    setTransferForm(prev => ({...prev, toCustodyId: clinic.id}));
-                                                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-                                                }}
-                                                className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-1 text-xs font-bold uppercase rounded flex items-center gap-1"
-                                            >
-                                                Supply Stock <ArrowRight className="w-3 h-3" />
-                                            </button>
+                                    <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group flex justify-between items-center">
+                                        <div>
+                                            <h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4>
+                                            <p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p>
                                         </div>
                                         
-                                        {/* Compact Stock View */}
-                                        <div className="flex gap-4 mt-2">
-                                            {PRODUCTS.map(p => (
-                                                <div key={p.id} className="text-xs">
-                                                    <span className="text-slate-400 block">{p.name.split(' ')[0]}</span>
-                                                    <span className="font-bold text-slate-800">{clinic.stock?.[p.id] || 0}</span>
-                                                </div>
-                                            ))}
+                                        <div className="flex items-center gap-6">
+                                             <div className="text-right">
+                                                <span className="block text-2xl font-black text-slate-900">{clinic.current_stock || 0}</span>
+                                                <span className="text-[10px] text-slate-400 uppercase font-bold">Pens</span>
+                                             </div>
+
+                                            <button 
+                                                onClick={() => {
+                                                    setTransferForm(prev => ({...prev, toCustodyId: clinic.id, educatorName: ''}));
+                                                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-2 text-xs font-bold uppercase rounded flex items-center gap-1"
+                                            >
+                                                Supply <ArrowRight className="w-3 h-3" />
+                                            </button>
                                         </div>
                                     </div>
                                 ))}
@@ -721,27 +694,16 @@ const App: React.FC = () => {
                                             ))}
                                         </select>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-2">
-                                         <div>
-                                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Product</label>
-                                            <select 
-                                                className="w-full border p-2 bg-slate-50 text-sm"
-                                                value={transferForm.productId}
-                                                onChange={e => setTransferForm({...transferForm, productId: e.target.value})}
-                                            >
-                                                {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity</label>
-                                            <input 
-                                                type="number" 
-                                                min="1"
-                                                className="w-full border p-2 bg-slate-50 text-sm"
-                                                value={transferForm.quantity}
-                                                onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
-                                            />
-                                        </div>
+                                    
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity (Pens)</label>
+                                        <input 
+                                            type="number" 
+                                            min="1"
+                                            className="w-full border p-2 bg-slate-50 text-sm font-bold"
+                                            value={transferForm.quantity}
+                                            onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
+                                        />
                                     </div>
 
                                     <div>
@@ -752,7 +714,7 @@ const App: React.FC = () => {
                                                     type="radio" 
                                                     name="sourceType" 
                                                     checked={transferForm.sourceType === 'rep'}
-                                                    onChange={() => setTransferForm({...transferForm, sourceType: 'rep'})}
+                                                    onChange={() => setTransferForm({...transferForm, sourceType: 'rep', educatorName: ''})}
                                                 />
                                                 <span className="text-xs font-bold">My Inventory (Rep)</span>
                                                 <span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span>
@@ -769,6 +731,20 @@ const App: React.FC = () => {
                                             </label>
                                         </div>
                                     </div>
+
+                                    {transferForm.sourceType === 'educator' && (
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Educator Name</label>
+                                            <input 
+                                                type="text"
+                                                required 
+                                                placeholder="Name of Educator"
+                                                className="w-full border p-2 bg-slate-50 text-sm"
+                                                value={transferForm.educatorName}
+                                                onChange={e => setTransferForm({...transferForm, educatorName: e.target.value})}
+                                            />
+                                        </div>
+                                    )}
                                     
                                     <button type="submit" className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700">
                                         Confirm Transfer
@@ -796,7 +772,7 @@ const App: React.FC = () => {
                       <Syringe className="w-5 h-5 text-[#FFC600]" />
                       New Pen Delivery
                       </h2>
-                      <p className="text-slate-400 text-sm mt-1">Register a transaction in the SPIN network.</p>
+                      <p className="text-slate-400 text-sm mt-1">Register a transaction and assign insulin product.</p>
                   </div>
                   
                   <div className="p-8">
@@ -854,12 +830,26 @@ const App: React.FC = () => {
                       )}
 
                       {foundPatient && (
-                          <button 
-                              onClick={() => setStep(2)} 
-                              className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide"
-                          >
-                              Next: Delivery Details
-                          </button>
+                          <>
+                             {duplicateWarning && (
+                                <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
+                                    <div className="flex items-start gap-3">
+                                        <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+                                        <div>
+                                            <p className="font-bold text-red-800 uppercase text-xs">Duplication Alert</p>
+                                            <p className="text-sm text-red-700 mb-1">This patient has already received a pen recently.</p>
+                                            <p className="text-xs text-red-600">Please verify: Is this a replacement? Or a different product assignment?</p>
+                                        </div>
+                                    </div>
+                                </div>
+                             )}
+                             <button 
+                                onClick={() => setStep(2)} 
+                                className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide"
+                             >
+                                Next: Delivery Details
+                             </button>
+                          </>
                       )}
                       </div>
 
@@ -891,7 +881,6 @@ const App: React.FC = () => {
                                         onChange={e => setSelectedCustody(e.target.value)}
                                     >
                                         <option value="">-- Select Source --</option>
-                                        {/* Grouping logic: Rep first, then clinics */}
                                         {custodies.filter(c => c.type === 'rep').map(c => (
                                             <option key={c.id} value={c.id}>My Inventory (Rep)</option>
                                         ))}
@@ -937,29 +926,36 @@ const App: React.FC = () => {
                                 </div>
                           </div>
 
-                           {/* Row 3 */}
-                           <div>
-                                <label className="block text-sm font-bold text-slate-800 mb-1">Educator Data Submission Date</label>
-                                <input 
-                                    type="date"
-                                    className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                    value={educatorDate}
-                                    onChange={e => setEducatorDate(e.target.value)}
-                                />
+                           {/* Row 3: Educator Info */}
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name</label>
+                                    <input 
+                                        type="text"
+                                        placeholder="Name"
+                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
+                                        value={educatorName}
+                                        onChange={e => setEducatorName(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label>
+                                    <input 
+                                        type="date"
+                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
+                                        value={educatorDate}
+                                        onChange={e => setEducatorDate(e.target.value)}
+                                    />
+                                </div>
                           </div>
 
                           <div>
-                              <label className="block text-sm font-bold text-slate-800 mb-2">Insulin Product</label>
+                              <label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label>
                               <div className="grid grid-cols-1 gap-2">
                                   {PRODUCTS.map(p => (
                                       <button
                                           key={p.id}
-                                          onClick={() => {
-                                              setSelectedProduct(p.id);
-                                              if (foundPatient) {
-                                                  dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning);
-                                              }
-                                          }}
+                                          onClick={() => setSelectedProduct(p.id)}
                                           className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}
                                       >
                                           <div className="font-bold text-sm">{p.name}</div>
@@ -969,23 +965,11 @@ const App: React.FC = () => {
                               </div>
                           </div>
 
-                          {duplicateWarning && (
-                              <div className="bg-red-50 border-l-4 border-red-500 p-4 animate-pulse">
-                                  <div className="flex items-start gap-3">
-                                      <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
-                                      <div>
-                                          <p className="font-bold text-red-800 uppercase text-xs">Duplicate Warning</p>
-                                          <p className="text-sm text-red-700">This patient has already received this product recently.</p>
-                                      </div>
-                                  </div>
-                              </div>
-                          )}
-
                           <button 
                               onClick={handleSubmitDelivery} 
                               className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}
                           >
-                              {duplicateWarning ? 'Override & Deliver' : 'Confirm Delivery'}
+                              {duplicateWarning ? 'Confirm Duplicate Entry' : 'Confirm Delivery'}
                           </button>
                       </div>
                       </div>
@@ -1008,10 +992,10 @@ const App: React.FC = () => {
                       <tr>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product</th>
+                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product Assigned</th>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th>
+                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th>
                       <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source</th>
-                      <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 text-right">Status</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1019,7 +1003,6 @@ const App: React.FC = () => {
                       <tr key={d.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-6 py-4 font-mono text-sm text-slate-600">
                               {formatDateFriendly(d.delivery_date)}
-                              {d.rx_date && <div className="text-[10px] text-slate-400 mt-1">Rx: {formatDateFriendly(d.rx_date)}</div>}
                           </td>
                           <td className="px-6 py-4">
                               <div className="font-bold text-slate-800">{d.patient?.full_name}</div>
@@ -1030,13 +1013,14 @@ const App: React.FC = () => {
                                   {getProductName(d.product_id)}
                               </span>
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}</td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{d.custody?.name || '-'}</td>
-                          <td className="px-6 py-4 text-right">
-                              <span className="text-xs font-bold text-green-600 uppercase tracking-wider flex items-center justify-end gap-1">
-                                  <CheckCircle className="w-3 h-3" /> Delivered
-                              </span>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                              {d.hcp?.full_name}
+                              {d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}
                           </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                              {d.educator_name || '-'}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">{d.custody?.name || '-'}</td>
                       </tr>
                       ))}
                   </tbody>
