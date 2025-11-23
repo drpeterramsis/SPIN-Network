@@ -1,3 +1,4 @@
+
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -413,11 +414,10 @@ export const dataService = {
           const custody = custodies.find(c => c.id === delivery.custody_id);
           
           if (custody) {
-              // Add stock back
-              await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + delivery.quantity });
-
-              // B. Attempt to delete the stock transaction to clear history
-              // Since we don't have a direct link ID, we look for a matching transaction
+              // Add stock back (delivery was -1, so we add 1)
+              // But simpler: just use deleteStockTransaction on the deduction record which handles balance
+              
+              // Find the transaction first
               let txIdToDelete = null;
               
               if (isSupabaseConfigured() && supabase) {
@@ -444,6 +444,9 @@ export const dataService = {
 
               if (txIdToDelete) {
                   await this.deleteStockTransaction(txIdToDelete);
+              } else {
+                  // Fallback if transaction missing: manual update
+                  await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + delivery.quantity });
               }
           }
       }
@@ -535,7 +538,32 @@ export const dataService = {
       }
   },
 
+  // IMPROVED DELETE: Safe deletion that restores balance
   async deleteStockTransaction(id: string): Promise<void> {
+      let tx: StockTransaction | null = null;
+      
+      // 1. Fetch transaction to get quantity and custody
+      if (isSupabaseConfigured() && supabase) {
+          const { data } = await supabase.from('stock_transactions').select('*').eq('id', id).single();
+          tx = data;
+      } else {
+          const list = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+          tx = list.find((t: StockTransaction) => t.id === id) || null;
+      }
+
+      // 2. Reverse the stock impact
+      if (tx) {
+          const custodies = await this.getCustodies();
+          const custody = custodies.find(c => c.id === tx!.custody_id);
+          
+          if (custody) {
+              // If tx.quantity was +10, we subtract 10. If -5, we add 5.
+              const reverseQty = -1 * tx.quantity;
+              await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + reverseQty });
+          }
+      }
+
+      // 3. Delete the record
       if (isSupabaseConfigured() && supabase) {
           await supabase.from('stock_transactions').delete().eq('id', id);
       } else {

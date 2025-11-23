@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Auth } from './components/Auth';
 import { dataService } from './services/dataService';
@@ -37,7 +38,9 @@ import {
   Info,
   Download,
   ArrowLeft,
-  RefreshCw
+  RefreshCw,
+  Loader2,
+  RotateCcw
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -45,8 +48,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.018",
-  version: "2.0.018"
+  name: "SPIN v2.0.019",
+  version: "2.0.019"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -142,6 +145,9 @@ const App: React.FC = () => {
       sourceType: 'rep' as 'educator' | 'rep',
       educatorName: ''
   });
+
+  // Global Loading State for Submissions
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const showToast = (msg: string, type: 'success'|'error'|'info' = 'success') => {
       setNotification({ msg, type });
@@ -323,13 +329,20 @@ const App: React.FC = () => {
 
   const handleCreatePatient = async () => {
     if (!newPatientForm.full_name || !nidSearch) return;
-    const newP = await dataService.createPatient({
-      national_id: nidSearch,
-      full_name: newPatientForm.full_name,
-      phone_number: newPatientForm.phone_number
-    });
-    setFoundPatient(newP);
-    showToast("New patient registered", "success");
+    setIsSubmitting(true);
+    try {
+        const newP = await dataService.createPatient({
+          national_id: nidSearch,
+          full_name: newPatientForm.full_name,
+          phone_number: newPatientForm.phone_number
+        });
+        setFoundPatient(newP);
+        showToast("New patient registered", "success");
+    } catch(e) {
+        showToast("Error creating patient", "error");
+    } finally {
+        setIsSubmitting(false);
+    }
   };
 
   const handleCancelDelivery = () => {
@@ -349,6 +362,7 @@ const App: React.FC = () => {
   const handleCreateHCP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newHCP.full_name || !newHCP.hospital) return;
+    setIsSubmitting(true);
     try {
         const created = await dataService.createHCP(newHCP);
         setHcps([...hcps, created]);
@@ -359,6 +373,8 @@ const App: React.FC = () => {
         showToast("Doctor registered successfully!", "success");
     } catch (error) {
         showToast("Failed to register doctor.", "error");
+    } finally {
+        setIsSubmitting(false);
     }
   };
 
@@ -369,6 +385,7 @@ const App: React.FC = () => {
     if (!selectedCustody) { showToast("Please select the Source Custody", "error"); return; }
     if (!educatorName) { showToast("Please enter the Reported Educator Name", "error"); return; }
     
+    setIsSubmitting(true);
     try {
       const userDisplayName = userProfile?.full_name || user.email;
       await dataService.logDelivery({
@@ -399,12 +416,15 @@ const App: React.FC = () => {
       setDbView('deliveries');
     } catch (e: any) {
       showToast("Failed to log delivery: " + e.message, "error");
+    } finally {
+        setIsSubmitting(false);
     }
   };
 
   // Custody Actions
   const handleReceiveStock = async (e: React.FormEvent) => {
       e.preventDefault();
+      setIsSubmitting(true);
       try {
         let targetRep = await dataService.getRepCustody();
         
@@ -444,6 +464,8 @@ const App: React.FC = () => {
         await loadData(); 
       } catch (err: any) {
           showToast(err.message, "error");
+      } finally {
+          setIsSubmitting(false);
       }
   };
 
@@ -454,6 +476,8 @@ const App: React.FC = () => {
         showToast("Please select a destination and quantity.", "error");
         return;
     }
+    
+    setIsSubmitting(true);
 
     try {
         let fromCustodyId = undefined;
@@ -488,12 +512,15 @@ const App: React.FC = () => {
         await loadData();
     } catch (err: any) {
         showToast("Transfer Failed: " + err.message, "error");
+    } finally {
+        setIsSubmitting(false);
     }
   };
 
   const handleAddClinic = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClinicForm.name) return;
+    setIsSubmitting(true);
     try {
         const finalName = newClinicForm.isPharmacy ? `${newClinicForm.name} (Pharmacy)` : newClinicForm.name;
         const created = await dataService.createCustody({
@@ -513,12 +540,15 @@ const App: React.FC = () => {
         }
     } catch (err: any) {
         showToast(err.message, "error");
+    } finally {
+        setIsSubmitting(false);
     }
   };
 
   // --- DELETE FUNCTIONALITY ---
   const handleDeleteItem = async (type: DBView | 'tx', id: string) => {
-      if (!window.confirm("Are you sure you want to delete this record? This will delete all related records (cascading) and try to restore any stock.")) return;
+      if (!window.confirm("Are you sure you want to delete this record? This will delete all related records (cascading) and restore stock if applicable.")) return;
+      setIsSubmitting(true);
       try {
           if (type === 'deliveries') await dataService.deleteDelivery(id);
           if (type === 'hcps') await dataService.deleteHCP(id);
@@ -526,10 +556,45 @@ const App: React.FC = () => {
           if (type === 'stock' || type === 'tx') await dataService.deleteStockTransaction(id);
           if (type === 'patients') await dataService.deletePatient(id);
           
-          showToast("Record deleted and stock adjusted where applicable.", "success");
+          showToast("Record deleted and database updated.", "success");
           loadData();
       } catch (err: any) {
           showToast("Delete failed: " + err.message, "error");
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+
+  // --- RETRIEVE STOCK (Revert) ---
+  const handleRetrieveStock = async (tx: StockTransaction) => {
+      // Logic: A transaction added stock to a clinic (Qty > 0). 
+      // User wants to move it BACK to Rep.
+      // This is essentially a Transfer FROM Clinic TO Rep.
+      
+      const custody = custodies.find(c => c.id === tx.custody_id);
+      if (!custody) return;
+      if (!repCustody) { showToast("Rep inventory not found", "error"); return; }
+      
+      if (!window.confirm(`Retrieve ${tx.quantity} pens from ${custody.name} back to My Inventory?`)) return;
+
+      setIsSubmitting(true);
+      try {
+          // Process transaction: Target = Rep, Source = Clinic
+          // This will deduct from Clinic and Add to Rep
+          await dataService.processStockTransaction(
+              repCustody.id,
+              tx.quantity,
+              getTodayString(),
+              `Retrieved from ${custody.name}`, // Label for Rep's + transaction
+              custody.id // Source (Clinic) -> will get deduction tx
+          );
+          
+          showToast("Stock retrieved successfully.", "success");
+          loadData();
+      } catch(e: any) {
+          showToast("Retrieve failed: " + e.message, "error");
+      } finally {
+          setIsSubmitting(false);
       }
   };
 
@@ -540,6 +605,7 @@ const App: React.FC = () => {
 
   const handleSaveEdit = async (e: React.FormEvent) => {
       e.preventDefault();
+      setIsSubmitting(true);
       try {
           if (editType === 'deliveries') {
               // Final duplicate check before save
@@ -547,7 +613,7 @@ const App: React.FC = () => {
                   const isDup = await dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id);
                   if (isDup) {
                       const confirm = window.confirm("WARNING: DUPLICATE DETECTED!\n\nThis patient has already received this product recently. Are you sure you want to approve this assignment?");
-                      if (!confirm) return;
+                      if (!confirm) { setIsSubmitting(false); return; }
                   }
               }
 
@@ -602,6 +668,8 @@ const App: React.FC = () => {
           loadData();
       } catch (err: any) {
           showToast("Update failed: " + err.message, "error");
+      } finally {
+          setIsSubmitting(false);
       }
   };
 
@@ -786,7 +854,9 @@ const App: React.FC = () => {
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Phone Number</label><input type="text" className="w-full border p-2 font-mono" value={editItem.phone_number} onChange={e => setEditItem({...editItem, phone_number: e.target.value})} /></div>
                         </>
                     )}
-                    <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Save Changes</button>
+                    <button type="submit" disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
+                        {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4" />} Save Changes
+                    </button>
                 </form>
              </div>
          </div>
@@ -812,7 +882,9 @@ const App: React.FC = () => {
                         <input required type="text" placeholder="Hospital Name" className="w-full border p-2" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} list="hospital-suggestions" />
                         <datalist id="hospital-suggestions">{hcpHospitals.map(h => <option key={h} value={h} />)}</datalist>
                     </div>
-                    <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide">Add to Directory</button>
+                    <button type="submit" disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
+                        {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Add to Directory'}
+                    </button>
                 </form>
             </div>
         </div>
@@ -841,7 +913,9 @@ const App: React.FC = () => {
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Registration Date</label>
                         <input type="date" className="w-full border p-2" value={newClinicForm.date} onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})} />
                     </div>
-                    <button type="submit" className="w-full bg-black hover:bg-slate-800 text-white font-bold py-3 uppercase tracking-wide">Register Location</button>
+                    <button type="submit" disabled={isSubmitting} className="w-full bg-black hover:bg-slate-800 text-white font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
+                         {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Register Location'}
+                    </button>
                 </form>
             </div>
         </div>
@@ -942,7 +1016,9 @@ const App: React.FC = () => {
                                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
                                         <input type="number" min="1" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" placeholder="0" value={receiveForm.quantity} onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})} />
                                     </div>
-                                    <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400 whitespace-nowrap">Add to Stock</button>
+                                    <button type="submit" disabled={isSubmitting} className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400 whitespace-nowrap disabled:opacity-50 flex items-center gap-2">
+                                        {isSubmitting && <Loader2 className="w-3 h-3 animate-spin"/>} Add to Stock
+                                    </button>
                                 </form>
                             </div>
                             <div className="w-full md:w-80 border-l border-slate-700 md:pl-4 mt-6 md:mt-0">
@@ -1012,7 +1088,9 @@ const App: React.FC = () => {
                                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Source of Stock</label>
                                         <div className="flex flex-col gap-2"><label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer"><input type="radio" name="sourceType" checked={transferForm.sourceType === 'rep'} onChange={() => setTransferForm({...transferForm, sourceType: 'rep', educatorName: ''})} /><span className="text-xs font-bold">My Inventory (Rep)</span><span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span></label></div>
                                     </div>
-                                    <button type="submit" className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700">Confirm Transfer</button>
+                                    <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700 flex items-center justify-center gap-2">
+                                        {isSubmitting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm Transfer'}
+                                    </button>
                                 </form>
                             </div>
                         </div>
@@ -1035,7 +1113,7 @@ const App: React.FC = () => {
                       {foundPatient ? (
                           <div className="bg-green-50 border border-green-200 p-4 mb-6 animate-in fade-in"><div className="flex items-start gap-3"><CheckCircle className="w-5 h-5 text-green-600 mt-0.5" /><div className="flex-1"><p className="font-bold text-green-800">Patient Found</p><p className="text-sm text-green-700">{foundPatient.full_name}</p><p className="text-xs text-green-600 font-mono">{foundPatient.national_id} | {foundPatient.phone_number}</p></div></div></div>
                       ) : hasSearched && (
-                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6 animate-in fade-in"><p className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[#FFC600]" /> Patient not found. Register new?</p><div className="space-y-3"><input type="text" placeholder="Full Name" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} /><input type="text" placeholder="Phone Number" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} /><button onClick={handleCreatePatient} className="bg-black text-white px-4 py-2 text-xs font-bold uppercase">Save & Select Patient</button></div></div>
+                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6 animate-in fade-in"><p className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[#FFC600]" /> Patient not found. Register new?</p><div className="space-y-3"><input type="text" placeholder="Full Name" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} /><input type="text" placeholder="Phone Number" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} /><button onClick={handleCreatePatient} disabled={isSubmitting} className="bg-black text-white px-4 py-2 text-xs font-bold uppercase flex items-center gap-2">{isSubmitting && <Loader2 className="w-3 h-3 animate-spin"/>} Save & Select Patient</button></div></div>
                       )}
                       {foundPatient && (
                           <>
@@ -1060,7 +1138,10 @@ const App: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select Doctor --</option>{hcps.map(h => (<option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>))}</select></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label><input type="text" placeholder="Name" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-list-delivery" /><datalist id="educator-list-delivery">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist><div className="flex flex-wrap gap-1 mt-1">{educatorSuggestions.slice(0, 6).map(s => (<button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>))}</div></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div></div>
                           <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => { setSelectedProduct(p.id); if(foundPatient) dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
-                          <button onClick={handleSubmitDelivery} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>{duplicateWarning ? 'Confirm Delivery (Review)' : 'Confirm Delivery'}</button>
+                          <button onClick={handleSubmitDelivery} disabled={isSubmitting} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all flex items-center justify-center gap-2 ${duplicateWarning ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>
+                             {isSubmitting && <Loader2 className="w-4 h-4 animate-spin"/>}
+                             {duplicateWarning ? 'Confirm Delivery (Review)' : 'Confirm Delivery'}
+                          </button>
                       </div>
                       </div>
                   </div>
@@ -1113,7 +1194,7 @@ const App: React.FC = () => {
                                 <tr>
                                     <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient Name</th>
                                     <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Identifiers</th>
-                                    <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Total Pens</th>
+                                    <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Current Therapy</th>
                                     <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Last Delivery</th>
                                     <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th>
                                 </tr>
@@ -1122,7 +1203,8 @@ const App: React.FC = () => {
                                 {filterData(patients).map(p => {
                                     const patientDeliveries = deliveries.filter(d => d.patient_id === p.id).sort((a,b) => new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime());
                                     const lastDelivery = patientDeliveries[0];
-                                    const totalPens = patientDeliveries.reduce((acc, curr) => acc + curr.quantity, 0);
+                                    // NEW: Assigned Product Logic
+                                    const latestProduct = lastDelivery ? getProductName(lastDelivery.product_id) : '-';
 
                                     return (
                                         <tr key={p.id} className="hover:bg-slate-50 transition-colors">
@@ -1132,7 +1214,7 @@ const App: React.FC = () => {
                                                 <div className="text-xs font-mono text-slate-500">Ph: {p.phone_number}</div>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <span className="inline-block px-2 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded border border-emerald-100">{totalPens} Pens</span>
+                                                {lastDelivery ? <span className="inline-block px-2 py-1 bg-purple-50 text-purple-700 text-xs font-bold rounded border border-purple-100">{latestProduct}</span> : <span className="text-slate-400">-</span>}
                                             </td>
                                             <td className="px-6 py-4 text-sm text-slate-600">
                                                 {lastDelivery ? formatDateFriendly(lastDelivery.delivery_date) : <span className="text-slate-400 italic">No history</span>}
@@ -1147,63 +1229,90 @@ const App: React.FC = () => {
                             </tbody>
                         </table>
                         {filterData(patients).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
-                    </div>
+                     </div>
                   )}
 
                   {dbView === 'hcps' && (
-                       <div className="space-y-4 animate-in fade-in">
-                           <div className="flex justify-end"><button onClick={() => setShowHCPModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800 rounded shadow-md"><Plus className="w-4 h-4" /> Add Doctor</button></div>
-                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto rounded-lg">
-                                <table className="w-full text-left">
-                                    <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{filterData(hcps).map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4">{h.specialty ? <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold uppercase">{h.specialty}</span> : '-'}</td><td className="px-6 py-4">{h.hospital ? <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold uppercase border border-slate-200">{h.hospital}</span> : '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
-                                </table>
-                           </div>
-                       </div>
+                     <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto rounded-lg">
+                        <table className="w-full text-left min-w-[800px]">
+                           <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
+                           <tbody className="divide-y divide-slate-100">
+                              {filterData(hcps).map(h => (
+                                 <tr key={h.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td>
+                                    <td className="px-6 py-4 text-sm text-slate-600">{h.specialty || '-'}</td>
+                                    <td className="px-6 py-4 text-sm text-slate-600">{h.hospital || '-'}</td>
+                                    <td className="px-6 py-4 flex gap-2">
+                                       <button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                       <button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                    </td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                        </table>
+                        {filterData(hcps).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
+                     </div>
                   )}
 
                   {dbView === 'locations' && (
-                      <div className="space-y-4 animate-in fade-in">
-                           <div className="flex justify-end"><button onClick={() => setShowClinicModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800 rounded shadow-md"><Plus className="w-4 h-4" /> Add Location</button></div>
-                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto rounded-lg">
-                                <table className="w-full text-left">
-                                    <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Location Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Stock Level</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{filterData(custodies).map(c => {
-                                        const isPharm = c.name.toLowerCase().includes('pharmacy');
-                                        return (
-                                        <tr key={c.id}>
-                                            <td className="px-6 py-4 font-bold text-slate-800">{c.name}</td>
-                                            <td className="px-6 py-4">
-                                                {c.type === 'rep' ? <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold uppercase">Rep</span> : (isPharm ? <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-1 rounded font-bold uppercase">Pharmacy</span> : <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-1 rounded font-bold uppercase">Clinic</span>)}
-                                            </td>
-                                            <td className="px-6 py-4 font-mono">{c.current_stock}</td>
-                                            <td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td>
-                                            <td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td>
-                                        </tr>
-                                    )})}</tbody>
-                                </table>
-                           </div>
-                       </div>
+                     <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto rounded-lg">
+                        <table className="w-full text-left min-w-[800px]">
+                           <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Location Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Current Stock</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
+                           <tbody className="divide-y divide-slate-100">
+                              {filterData(custodies).map(c => (
+                                 <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="px-6 py-4 font-bold text-slate-800">{c.name}</td>
+                                    <td className="px-6 py-4"><span className={`text-[10px] px-2 py-1 rounded border font-bold uppercase ${c.type === 'rep' ? 'bg-blue-50 text-blue-800 border-blue-100' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{c.type}</span></td>
+                                    <td className="px-6 py-4 font-mono font-bold">{c.current_stock}</td>
+                                    <td className="px-6 py-4 text-sm text-slate-600">{formatDateFriendly(c.created_at)}</td>
+                                    <td className="px-6 py-4 flex gap-2">
+                                       <button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                       <button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                    </td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                        </table>
+                        {filterData(custodies).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
+                     </div>
                   )}
 
                   {dbView === 'stock' && (
-                      <div className="space-y-4 animate-in fade-in">
-                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto rounded-lg">
-                                <table className="w-full text-left">
-                                    <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Custody</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Change</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Reason</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{filterData(stockTransactions).map(s => { const custody = custodies.find(c => c.id === s.custody_id); return (<tr key={s.id}><td className="px-6 py-4 text-slate-600 font-mono text-sm">{formatDateFriendly(s.transaction_date)}</td><td className="px-6 py-4 font-bold text-slate-800">{custody?.name || s.custody_id}</td><td className={`px-6 py-4 font-mono font-bold ${s.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{s.quantity > 0 ? '+' : ''}{s.quantity}</td><td className="px-6 py-4 text-slate-600 text-sm">{resolveSourceText(s.source)}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('stock', s)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('stock', s.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>);})}</tbody>
-                                </table>
-                           </div>
-                           {filterData(stockTransactions).length === 0 && <div className="text-center text-slate-400 p-8">No stock history available</div>}
-                       </div>
+                     <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto rounded-lg">
+                        <table className="w-full text-left min-w-[800px]">
+                           <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Target Custody</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Quantity</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Notes</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
+                           <tbody className="divide-y divide-slate-100">
+                              {filterData(stockTransactions).map(t => {
+                                 const custodyName = custodies.find(c => c.id === t.custody_id)?.name || t.custody_id;
+                                 return (
+                                    <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                       <td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(t.transaction_date)}</td>
+                                       <td className="px-6 py-4 font-bold text-slate-800">{custodyName}</td>
+                                       <td className={`px-6 py-4 font-bold ${t.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{t.quantity > 0 ? '+' : ''}{t.quantity}</td>
+                                       <td className="px-6 py-4 text-sm text-slate-600">{resolveSourceText(t.source)}</td>
+                                       <td className="px-6 py-4 flex gap-2">
+                                          <button onClick={() => openEditModal('stock', t)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                          {t.quantity > 0 && custodies.find(c => c.id === t.custody_id)?.type !== 'rep' && (
+                                              <button onClick={() => handleRetrieveStock(t)} className="text-slate-400 hover:text-orange-500" title="Retrieve Stock"><RotateCcw className="w-4 h-4" /></button>
+                                          )}
+                                          <button onClick={() => handleDeleteItem('stock', t.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                       </td>
+                                    </tr>
+                                 );
+                              })}
+                           </tbody>
+                        </table>
+                        {filterData(stockTransactions).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
+                     </div>
                   )}
+
               </div>
             )
           )}
         </main>
       </div>
-      <footer className="bg-white border-t border-slate-200 py-6 shrink-0 z-10"><div className="max-w-7xl mx-auto px-4 text-center text-slate-400 text-xs"><p>SPIN - Supply Insulin Pen Network &copy; 2025 | Version {METADATA.version}</p></div></footer>
-      {user && <AIReportModal isOpen={showAIModal} onClose={() => setShowAIModal(false)} deliveries={deliveries} userEmail={user.email} />}
+
+      <AIReportModal isOpen={showAIModal} onClose={() => setShowAIModal(false)} deliveries={deliveries} userEmail={user?.email || ''} />
     </div>
   );
 };
