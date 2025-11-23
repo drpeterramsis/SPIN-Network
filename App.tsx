@@ -32,7 +32,9 @@ import {
   Undo2,
   History,
   Pencil,
-  Save
+  Save,
+  Trash2,
+  Info
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -40,18 +42,39 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.010",
-  version: "2.0.010"
+  name: "SPIN v2.0.011",
+  version: "2.0.011"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
 type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock';
+
+// --- TOAST NOTIFICATION COMPONENT ---
+const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
+    useEffect(() => {
+        const timer = setTimeout(onClose, 4000);
+        return () => clearTimeout(timer);
+    }, [onClose]);
+
+    const bg = type === 'success' ? 'bg-green-600' : type === 'error' ? 'bg-red-600' : 'bg-blue-600';
+
+    return (
+        <div className={`fixed bottom-6 right-6 z-[100] ${bg} text-white px-6 py-4 rounded-lg shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300`}>
+            {type === 'success' && <CheckCircle className="w-5 h-5" />}
+            {type === 'error' && <AlertTriangle className="w-5 h-5" />}
+            {type === 'info' && <Info className="w-5 h-5" />}
+            <span className="font-bold text-sm">{message}</span>
+            <button onClick={onClose} className="ml-2 hover:bg-white/20 rounded-full p-1"><X className="w-4 h-4" /></button>
+        </div>
+    );
+};
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [notification, setNotification] = useState<{msg: string, type: 'success'|'error'|'info'} | null>(null);
   
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [dbView, setDbView] = useState<DBView>('deliveries');
@@ -94,7 +117,7 @@ const App: React.FC = () => {
 
   // Custody Actions Forms
   const [showClinicModal, setShowClinicModal] = useState(false);
-  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString() });
+  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString(), isPharmacy: false });
 
   // Stock Forms
   const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '' });
@@ -105,6 +128,10 @@ const App: React.FC = () => {
       sourceType: 'rep' as 'educator' | 'rep',
       educatorName: ''
   });
+
+  const showToast = (msg: string, type: 'success'|'error'|'info' = 'success') => {
+      setNotification({ msg, type });
+  };
 
   // Initialization
   useEffect(() => {
@@ -129,7 +156,6 @@ const App: React.FC = () => {
   const loadData = useCallback(async () => {
     if (!user) return; 
     
-    // Safe fetch wrapper to prevent one failure from blocking all data
     const safeFetch = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
         try { return await fn(); } catch (e) { console.error("Fetch error:", e); return fallback; }
     };
@@ -147,7 +173,6 @@ const App: React.FC = () => {
       setCustodies(c);
       setStockTransactions(s);
       
-      // Load Rep Custody independently
       try {
           const repC = await dataService.getRepCustody();
           setRepCustody(repC);
@@ -155,19 +180,13 @@ const App: React.FC = () => {
           console.error("Error loading Rep Custody", e);
       }
 
-      // Extract unique educators
       const educatorSet = new Set<string>();
-      
-      d.forEach(item => {
-          if (item.educator_name) educatorSet.add(item.educator_name);
-      });
-      
+      d.forEach(item => { if (item.educator_name) educatorSet.add(item.educator_name); });
       s.forEach(tx => {
           if (tx.source && tx.source.startsWith('Educator: ')) {
               educatorSet.add(tx.source.replace('Educator: ', '').trim());
           }
       });
-      
       setEducatorSuggestions(Array.from(educatorSet).sort());
 
     } catch (error) {
@@ -201,7 +220,6 @@ const App: React.FC = () => {
     }
   }, [user, loadData]);
 
-  // Auto-select Rep Custody in Delivery Step 2
   useEffect(() => {
       if (step === 2 && !selectedCustody && repCustody) {
           setSelectedCustody(repCustody.id);
@@ -211,7 +229,7 @@ const App: React.FC = () => {
   // Form Logic
   const handlePatientSearch = async () => {
     if (nidSearch.length < 3) {
-        alert("Please enter at least 3 characters");
+        showToast("Please enter at least 3 characters", "error");
         return;
     }
     setHasSearched(true);
@@ -233,6 +251,7 @@ const App: React.FC = () => {
       phone_number: newPatientForm.phone_number
     });
     setFoundPatient(newP);
+    showToast("New patient registered", "success");
   };
 
   const handleCancelDelivery = () => {
@@ -252,29 +271,27 @@ const App: React.FC = () => {
   const handleCreateHCP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newHCP.full_name || !newHCP.hospital) return;
-    
     try {
         const created = await dataService.createHCP(newHCP);
         setHcps([...hcps, created]);
         setSelectedHCP(created.id); 
         setShowHCPModal(false);
         setNewHCP({ full_name: '', specialty: '', hospital: '' });
-        alert("Doctor registered successfully!");
+        showToast("Doctor registered successfully!", "success");
     } catch (error) {
-        console.error(error);
-        alert("Failed to register doctor.");
+        showToast("Failed to register doctor.", "error");
     }
   };
 
   const handleSubmitDelivery = async () => {
-    if (!foundPatient) { alert("No patient selected"); return; }
-    if (!selectedHCP) { alert("Please select a Prescribing Doctor"); return; }
-    if (!selectedProduct) { alert("Please select a Product"); return; }
-    if (!selectedCustody) { alert("Please select the Source Custody (My Inventory or Clinic)"); return; }
-    if (!educatorName) { alert("Please enter the Reported Educator Name"); return; }
+    if (!foundPatient) { showToast("No patient selected", "error"); return; }
+    if (!selectedHCP) { showToast("Please select a Prescribing Doctor", "error"); return; }
+    if (!selectedProduct) { showToast("Please select a Product", "error"); return; }
+    if (!selectedCustody) { showToast("Please select the Source Custody", "error"); return; }
+    if (!educatorName) { showToast("Please enter the Reported Educator Name", "error"); return; }
     
     try {
-      // Note: we pass custody_id to helper, which handles logic, even if DB schema might exclude it for 'deliveries' table inserts
+      const userDisplayName = userProfile?.full_name || user.email;
       await dataService.logDelivery({
         patient_id: foundPatient.id,
         hcp_id: selectedHCP,
@@ -285,10 +302,11 @@ const App: React.FC = () => {
         rx_date: rxDate,
         educator_name: educatorName,
         educator_submission_date: educatorDate,
-        custody_id: selectedCustody 
-      });
+        custody_id: selectedCustody,
+        patient: foundPatient 
+      }, userDisplayName);
       
-      alert("Delivery Logged Successfully");
+      showToast("Delivery Logged Successfully", "success");
       setStep(1);
       setNidSearch('');
       setFoundPatient(null);
@@ -301,7 +319,7 @@ const App: React.FC = () => {
       setActiveTab('database');
       setDbView('deliveries');
     } catch (e: any) {
-      alert("Failed to log delivery: " + (e.message || JSON.stringify(e)));
+      showToast("Failed to log delivery: " + e.message, "error");
     }
   };
 
@@ -309,14 +327,13 @@ const App: React.FC = () => {
   const handleReceiveStock = async (e: React.FormEvent) => {
       e.preventDefault();
       try {
-        // Force refresh rep custody
         let targetRep = await dataService.getRepCustody();
         if (!targetRep) throw new Error("My Inventory not found");
         setRepCustody(targetRep);
 
         const { quantity, educatorName } = receiveForm;
         if (!quantity) {
-            alert("Please enter quantity.");
+            showToast("Please enter quantity.", "error");
             return;
         }
 
@@ -326,11 +343,11 @@ const App: React.FC = () => {
             getTodayString(),
             `Educator: ${educatorName || 'Unknown'}`
         );
-        alert("Stock received successfully into My Inventory.");
+        showToast("Stock received successfully", "success");
         setReceiveForm({ quantity: 0, educatorName: '' });
         await loadData(); 
       } catch (err: any) {
-          alert("Error: " + err.message);
+          showToast(err.message, "error");
       }
   };
 
@@ -338,7 +355,7 @@ const App: React.FC = () => {
     e.preventDefault();
     const { toCustodyId, quantity, date, sourceType, educatorName } = transferForm;
     if (!toCustodyId || !quantity) {
-        alert("Please select a destination and quantity.");
+        showToast("Please select a destination and quantity.", "error");
         return;
     }
 
@@ -347,20 +364,19 @@ const App: React.FC = () => {
         let sourceLabel = `Educator: ${educatorName || 'Unknown'}`;
 
         if (sourceType === 'rep') {
-            // Refresh rep custody to ensure we have the ID
             const r = await dataService.getRepCustody();
             setRepCustody(r);
-            if (!r || !r.id) throw new Error("Rep custody not initialized. Please refresh page.");
+            if (!r || !r.id) throw new Error("Rep custody not initialized.");
             fromCustodyId = r.id;
             sourceLabel = 'Medical Rep Transfer';
         }
 
         await dataService.processStockTransaction(toCustodyId, Number(quantity), date, sourceLabel, fromCustodyId);
-        alert("Stock transferred successfully");
+        showToast("Stock transferred successfully", "success");
         setTransferForm({ ...transferForm, quantity: 0, educatorName: '' });
         await loadData();
     } catch (err: any) {
-        alert("Transfer Failed: " + err.message);
+        showToast("Transfer Failed: " + err.message, "error");
     }
   };
 
@@ -368,13 +384,14 @@ const App: React.FC = () => {
     e.preventDefault();
     if (!newClinicForm.name) return;
     try {
+        const finalName = newClinicForm.isPharmacy ? `${newClinicForm.name} (Pharmacy)` : newClinicForm.name;
         const created = await dataService.createCustody({
-            name: newClinicForm.name,
+            name: finalName,
             type: 'clinic',
             created_at: newClinicForm.date
         });
-        alert("Clinic Custody Registered");
-        setNewClinicForm({ ...newClinicForm, name: '' });
+        showToast("Location Registered", "success");
+        setNewClinicForm({ name: '', date: getTodayString(), isPharmacy: false });
         setShowClinicModal(false);
         await loadData();
         
@@ -384,11 +401,26 @@ const App: React.FC = () => {
             setTransferForm(prev => ({ ...prev, toCustodyId: created.id }));
         }
     } catch (err: any) {
-        alert("Failed to add clinic: " + err.message);
+        showToast(err.message, "error");
     }
   };
 
-  // --- EDIT FUNCTIONALITY ---
+  // --- DELETE FUNCTIONALITY ---
+  const handleDeleteItem = async (type: DBView | 'tx', id: string) => {
+      if (!window.confirm("Are you sure you want to delete this record? This may affect related data.")) return;
+      try {
+          if (type === 'deliveries') await dataService.deleteDelivery(id);
+          if (type === 'hcps') await dataService.deleteHCP(id);
+          if (type === 'locations') await dataService.deleteCustody(id);
+          if (type === 'stock' || type === 'tx') await dataService.deleteStockTransaction(id);
+          
+          showToast("Record deleted", "success");
+          loadData();
+      } catch (err: any) {
+          showToast("Delete failed: " + err.message, "error");
+      }
+  };
+
   const openEditModal = (type: DBView, item: any) => {
       setEditType(type);
       setEditItem(item);
@@ -413,25 +445,24 @@ const App: React.FC = () => {
           } else if (editType === 'locations') {
               await dataService.updateCustody(editItem.id, {
                   name: editItem.name,
-                  current_stock: Number(editItem.current_stock) // Allow stock correction
+                  current_stock: Number(editItem.current_stock)
               });
           } else if (editType === 'stock') {
               await dataService.updateStockTransaction(editItem.id, {
                   transaction_date: editItem.transaction_date,
                   source: editItem.source,
-                  quantity: Number(editItem.quantity) // Smart update logic in service
+                  quantity: Number(editItem.quantity)
               });
           }
-          alert("Record updated successfully.");
+          showToast("Record updated successfully", "success");
           setEditItem(null);
           setEditType(null);
           loadData();
       } catch (err: any) {
-          alert("Update failed: " + err.message);
+          showToast("Update failed: " + err.message, "error");
       }
   };
 
-  // Component for Locked State
   const LockedState = ({ title, description }: { title: string, description: string }) => (
     <div className="bg-white border-t-4 border-slate-200 shadow-sm p-12 text-center">
         <div className="bg-slate-100 w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6">
@@ -453,36 +484,19 @@ const App: React.FC = () => {
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-black text-[#FFC600]"><Activity className="animate-spin w-10 h-10" /></div>;
 
   return (
-    <div className="h-screen bg-slate-100 flex flex-col font-sans overflow-hidden">
+    <div className="h-screen bg-slate-100 flex flex-col font-sans overflow-hidden relative">
       
-      <Auth 
-        isOpen={showLoginModal} 
-        onClose={() => setShowLoginModal(false)} 
-        onLogin={setUser} 
-      />
-
-      {user && (
-        <ProfileModal
-          isOpen={showProfileModal}
-          onClose={() => setShowProfileModal(false)}
-          user={user}
-          onLogout={() => {
-            setUser(null);
-            setShowProfileModal(false);
-          }}
-        />
+      {notification && (
+          <Toast message={notification.msg} type={notification.type} onClose={() => setNotification(null)} />
       )}
+
+      <Auth isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} onLogin={setUser} />
+      {user && <ProfileModal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} user={user} onLogout={() => { setUser(null); setShowProfileModal(false); }} />}
 
       {/* GENERIC EDIT MODAL */}
       {editItem && editType && (
-         <div 
-            className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
-            onClick={() => { setEditItem(null); setEditType(null); }}
-         >
-             <div 
-                className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-             >
+         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); }}>
+             <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl" onClick={(e) => e.stopPropagation()}>
                  <div className="bg-black p-4 flex items-center justify-between">
                      <div className="flex items-center gap-3">
                         <Pencil className="w-5 h-5 text-[#FFC600]" />
@@ -493,68 +507,31 @@ const App: React.FC = () => {
                 <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
                     {editType === 'deliveries' && (
                         <>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Delivery Date</label>
-                                <input type="date" className="w-full border p-2" value={editItem.delivery_date} onChange={e => setEditItem({...editItem, delivery_date: e.target.value})} />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Name</label>
-                                <input type="text" className="w-full border p-2" value={editItem.educator_name} onChange={e => setEditItem({...editItem, educator_name: e.target.value})} />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rx Date</label>
-                                <input type="date" className="w-full border p-2" value={editItem.rx_date || ''} onChange={e => setEditItem({...editItem, rx_date: e.target.value})} />
-                             </div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Delivery Date</label><input type="date" className="w-full border p-2" value={editItem.delivery_date} onChange={e => setEditItem({...editItem, delivery_date: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Name</label><input type="text" className="w-full border p-2" value={editItem.educator_name} onChange={e => setEditItem({...editItem, educator_name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rx Date</label><input type="date" className="w-full border p-2" value={editItem.rx_date || ''} onChange={e => setEditItem({...editItem, rx_date: e.target.value})} /></div>
                         </>
                     )}
-
                     {editType === 'hcps' && (
                         <>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label>
-                                <input type="text" className="w-full border p-2" value={editItem.full_name} onChange={e => setEditItem({...editItem, full_name: e.target.value})} />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital</label>
-                                <input type="text" className="w-full border p-2" value={editItem.hospital} onChange={e => setEditItem({...editItem, hospital: e.target.value})} />
-                             </div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label><input type="text" className="w-full border p-2" value={editItem.full_name} onChange={e => setEditItem({...editItem, full_name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital</label><input type="text" className="w-full border p-2" value={editItem.hospital} onChange={e => setEditItem({...editItem, hospital: e.target.value})} /></div>
                         </>
                     )}
-
                     {editType === 'locations' && (
                         <>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Location Name</label>
-                                <input type="text" className="w-full border p-2" value={editItem.name} onChange={e => setEditItem({...editItem, name: e.target.value})} />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Current Stock (Correction)</label>
-                                <input type="number" className="w-full border p-2 font-bold text-red-600" value={editItem.current_stock} onChange={e => setEditItem({...editItem, current_stock: e.target.value})} />
-                                <p className="text-[10px] text-red-500 mt-1">Warning: Manually changing this overrides transaction history.</p>
-                             </div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Location Name</label><input type="text" className="w-full border p-2" value={editItem.name} onChange={e => setEditItem({...editItem, name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Stock (Override)</label><input type="number" className="w-full border p-2 font-bold text-red-600" value={editItem.current_stock} onChange={e => setEditItem({...editItem, current_stock: e.target.value})} /></div>
                         </>
                     )}
-
                     {editType === 'stock' && (
                         <>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label>
-                                <input type="date" className="w-full border p-2" value={editItem.transaction_date} onChange={e => setEditItem({...editItem, transaction_date: e.target.value})} />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label>
-                                <input type="number" className="w-full border p-2" value={editItem.quantity} onChange={e => setEditItem({...editItem, quantity: e.target.value})} />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source / Notes</label>
-                                <input type="text" className="w-full border p-2" value={editItem.source} onChange={e => setEditItem({...editItem, source: e.target.value})} />
-                             </div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label><input type="date" className="w-full border p-2" value={editItem.transaction_date} onChange={e => setEditItem({...editItem, transaction_date: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label><input type="number" className="w-full border p-2" value={editItem.quantity} onChange={e => setEditItem({...editItem, quantity: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source / Notes</label><input type="text" className="w-full border p-2" value={editItem.source} onChange={e => setEditItem({...editItem, source: e.target.value})} /></div>
                         </>
                     )}
-
-                    <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
-                        <Save className="w-4 h-4" /> Save Changes
-                    </button>
+                    <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Save Changes</button>
                 </form>
              </div>
          </div>
@@ -562,72 +539,17 @@ const App: React.FC = () => {
 
       {/* NEW HCP MODAL */}
       {showHCPModal && (
-        <div 
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
-            onClick={() => setShowHCPModal(false)}
-        >
-            <div 
-                className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-            >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => setShowHCPModal(false)}>
+            <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl" onClick={(e) => e.stopPropagation()}>
                 <div className="bg-black p-4 flex items-center justify-between">
-                     <div className="flex items-center gap-3">
-                        <Stethoscope className="w-5 h-5 text-[#FFC600]" />
-                        <h3 className="text-white font-bold">Register New Doctor</h3>
-                     </div>
+                     <div className="flex items-center gap-3"><Stethoscope className="w-5 h-5 text-[#FFC600]" /><h3 className="text-white font-bold">Register New Doctor</h3></div>
                      <button onClick={() => setShowHCPModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
                 <form onSubmit={handleCreateHCP} className="p-6 space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label>
-                        <input 
-                            required
-                            type="text" 
-                            placeholder="Dr. Name"
-                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
-                            value={newHCP.full_name}
-                            onChange={e => setNewHCP({...newHCP, full_name: e.target.value})}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label>
-                        <input 
-                            type="text" 
-                            placeholder="e.g. Endocrinology"
-                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
-                            value={newHCP.specialty}
-                            onChange={e => setNewHCP({...newHCP, specialty: e.target.value})}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital / Clinic</label>
-                        <input 
-                            required
-                            type="text" 
-                            placeholder="Hospital Name"
-                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
-                            value={newHCP.hospital}
-                            onChange={e => setNewHCP({...newHCP, hospital: e.target.value})}
-                        />
-                        <div className="flex flex-wrap gap-2 mt-2">
-                            {['Private Clinic', 'Poly Clinic', 'General Hospital', 'Medical Center'].map(tag => (
-                                <button 
-                                    key={tag}
-                                    type="button" 
-                                    onClick={() => setNewHCP(prev => ({...prev, hospital: prev.hospital ? `${prev.hospital} ${tag}` : tag}))}
-                                    className="text-[10px] uppercase font-bold px-2 py-1 bg-slate-100 hover:bg-[#FFC600] hover:text-black rounded border border-slate-200 transition-colors"
-                                >
-                                    {tag}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                    <button 
-                        type="submit" 
-                        className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide"
-                    >
-                        Add to Directory
-                    </button>
+                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label><input required type="text" placeholder="Dr. Name" className="w-full border p-2" value={newHCP.full_name} onChange={e => setNewHCP({...newHCP, full_name: e.target.value})} /></div>
+                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label><input type="text" placeholder="e.g. Endocrinology" className="w-full border p-2" value={newHCP.specialty} onChange={e => setNewHCP({...newHCP, specialty: e.target.value})} /></div>
+                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital / Clinic</label><input required type="text" placeholder="Hospital Name" className="w-full border p-2" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} /></div>
+                    <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide">Add to Directory</button>
                 </form>
             </div>
         </div>
@@ -635,54 +557,33 @@ const App: React.FC = () => {
 
       {/* NEW CLINIC MODAL */}
       {showClinicModal && (
-        <div 
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
-            onClick={() => setShowClinicModal(false)}
-        >
-            <div 
-                className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-            >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => setShowClinicModal(false)}>
+            <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl" onClick={(e) => e.stopPropagation()}>
                 <div className="bg-black p-4 flex items-center justify-between">
-                     <div className="flex items-center gap-3">
-                        <Store className="w-5 h-5 text-[#FFC600]" />
-                        <h3 className="text-white font-bold">Add Clinic / Location</h3>
-                     </div>
+                     <div className="flex items-center gap-3"><Store className="w-5 h-5 text-[#FFC600]" /><h3 className="text-white font-bold">Add Clinic / Location</h3></div>
                      <button onClick={() => setShowClinicModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
                 <form onSubmit={handleAddClinic} className="p-6 space-y-4">
                     <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Location Name</label>
-                        <input 
-                            required
-                            type="text" 
-                            placeholder="Pharmacy or Clinic Name"
-                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
-                            value={newClinicForm.name}
-                            onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})}
-                        />
+                        <input required type="text" placeholder="Pharmacy or Clinic Name" className="w-full border p-2" value={newClinicForm.name} onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})} />
+                    </div>
+                    <div>
+                         <label className="flex items-center gap-2 p-2 border rounded bg-slate-50 cursor-pointer">
+                             <input type="checkbox" checked={newClinicForm.isPharmacy} onChange={e => setNewClinicForm({...newClinicForm, isPharmacy: e.target.checked})} />
+                             <span className="text-sm font-bold">This is a Pharmacy</span>
+                         </label>
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Registration Date</label>
-                        <input 
-                            type="date" 
-                            className="w-full border p-2 bg-slate-50 focus:border-[#FFC600] outline-none"
-                            value={newClinicForm.date}
-                            onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})}
-                        />
+                        <input type="date" className="w-full border p-2" value={newClinicForm.date} onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})} />
                     </div>
-                    <button 
-                        type="submit" 
-                        className="w-full bg-black hover:bg-slate-800 text-white font-bold py-3 uppercase tracking-wide"
-                    >
-                        Register Location
-                    </button>
+                    <button type="submit" className="w-full bg-black hover:bg-slate-800 text-white font-bold py-3 uppercase tracking-wide">Register Location</button>
                 </form>
             </div>
         </div>
       )}
 
-      {/* NAVBAR */}
       <nav className="bg-black text-white sticky top-0 z-40 shadow-md border-b-4 border-[#FFC600] shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
@@ -699,596 +600,172 @@ const App: React.FC = () => {
             <div className="flex items-center gap-4">
               {user ? (
                   <>
-                    <button 
-                      onClick={() => setShowProfileModal(true)}
-                      className="hidden md:flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider hover:text-[#FFC600] transition-colors"
-                    >
-                        <UserCircle className="w-4 h-4" />
-                        {userProfile?.full_name || user.email}
-                    </button>
-                    <button onClick={() => setShowAIModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded transition-colors border border-slate-700 text-[#FFC600]">
-                        <Sparkles className="w-3 h-3" /> Intelligence
-                    </button>
+                    <button onClick={() => setShowProfileModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider hover:text-[#FFC600] transition-colors"><UserCircle className="w-4 h-4" />{userProfile?.full_name || user.email}</button>
+                    <button onClick={() => setShowAIModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded transition-colors border border-slate-700 text-[#FFC600]"><Sparkles className="w-3 h-3" /> Intelligence</button>
                     <div className="h-8 w-px bg-slate-800 mx-1"></div>
-                    <button onClick={async () => { await supabase?.auth.signOut(); setUser(null); }} className="text-slate-400 hover:text-white transition-colors flex items-center gap-2" title="Logout">
-                        <LogOut className="w-5 h-5" />
-                    </button>
+                    <button onClick={async () => { await supabase?.auth.signOut(); setUser(null); }} className="text-slate-400 hover:text-white transition-colors flex items-center gap-2" title="Logout"><LogOut className="w-5 h-5" /></button>
                   </>
               ) : (
-                  <button 
-                    onClick={() => setShowLoginModal(true)}
-                    className="flex items-center gap-2 bg-[#FFC600] hover:bg-yellow-400 text-black px-4 py-2 font-bold uppercase text-xs tracking-wider transition-colors"
-                  >
-                    <LogIn className="w-4 h-4" /> Staff Login
-                  </button>
+                  <button onClick={() => setShowLoginModal(true)} className="flex items-center gap-2 bg-[#FFC600] hover:bg-yellow-400 text-black px-4 py-2 font-bold uppercase text-xs tracking-wider transition-colors"><LogIn className="w-4 h-4" /> Staff Login</button>
               )}
             </div>
           </div>
         </div>
       </nav>
 
-      {/* MAIN SCROLLABLE CONTENT */}
       <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative">
         <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-full">
           
-          {/* TABS */}
           <div className="flex space-x-1 bg-white p-1 rounded-xl shadow-sm border border-slate-200 mb-8 w-full md:w-auto inline-flex overflow-x-auto">
-            {[
-              { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-              { id: 'deliver', label: 'Deliver Pen', icon: Syringe },
-              { id: 'custody', label: 'Custody', icon: Building2 },
-              { id: 'database', label: 'Database', icon: Database },
-            ].map(t => (
-              <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id as Tab)}
-                className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${
-                  activeTab === t.id 
-                    ? 'bg-black text-[#FFC600] shadow-md' 
-                    : 'text-slate-500 hover:bg-slate-50'
-                }`}
-              >
-                <t.icon className="w-4 h-4" /> {t.label}
-                {!user && t.id !== 'dashboard' && <Lock className="w-3 h-3 ml-1 opacity-50" />}
-              </button>
+            {[{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'deliver', label: 'Deliver Pen', icon: Syringe }, { id: 'custody', label: 'Custody', icon: Building2 }, { id: 'database', label: 'Database', icon: Database }].map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id as Tab)} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === t.id ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><t.icon className="w-4 h-4" /> {t.label} {!user && t.id !== 'dashboard' && <Lock className="w-3 h-3 ml-1 opacity-50" />}</button>
             ))}
           </div>
 
-          {/* DASHBOARD VIEW */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               {!user ? (
-                  // PUBLIC WELCOME VIEW
                   <div className="space-y-8">
                       <div className="bg-white border-l-8 border-[#FFC600] p-8 shadow-lg">
                           <h2 className="text-4xl font-black text-slate-900 mb-4">Welcome to SPIN</h2>
-                          <p className="text-lg text-slate-600 max-w-3xl">
-                              The <strong>Supply Insulin Pen Network</strong> is an advanced tracking and verification system designed to ensure the secure, efficient, and traceable distribution of insulin pens to patients.
-                          </p>
+                          <p className="text-lg text-slate-600 max-w-3xl">The <strong>Supply Insulin Pen Network</strong> is an advanced tracking and verification system designed to ensure the secure, efficient, and traceable distribution of insulin pens to patients.</p>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900">
-                              <ShieldCheck className="w-12 h-12 text-[#FFC600] mb-4" />
-                              <h3 className="font-bold text-lg mb-2">Secure Validation</h3>
-                              <p className="text-slate-500 text-sm">Every transaction is verified against patient ID to prevent duplication and fraud.</p>
-                          </div>
-                          <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900">
-                              <BarChart3 className="w-12 h-12 text-[#FFC600] mb-4" />
-                              <h3 className="font-bold text-lg mb-2">Real-time Tracking</h3>
-                              <p className="text-slate-500 text-sm">Monitor stock levels and distribution flow across all healthcare providers instantly.</p>
-                          </div>
-                          <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900">
-                              <Users className="w-12 h-12 text-[#FFC600] mb-4" />
-                              <h3 className="font-bold text-lg mb-2">Patient Centric</h3>
-                              <p className="text-slate-500 text-sm">Ensuring the right patient gets the right treatment at the right time.</p>
-                          </div>
+                          <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900"><ShieldCheck className="w-12 h-12 text-[#FFC600] mb-4" /><h3 className="font-bold text-lg mb-2">Secure Validation</h3><p className="text-slate-500 text-sm">Every transaction is verified against patient ID to prevent duplication and fraud.</p></div>
+                          <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900"><BarChart3 className="w-12 h-12 text-[#FFC600] mb-4" /><h3 className="font-bold text-lg mb-2">Real-time Tracking</h3><p className="text-slate-500 text-sm">Monitor stock levels and distribution flow across all healthcare providers instantly.</p></div>
+                          <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900"><Users className="w-12 h-12 text-[#FFC600] mb-4" /><h3 className="font-bold text-lg mb-2">Patient Centric</h3><p className="text-slate-500 text-sm">Ensuring the right patient gets the right treatment at the right time.</p></div>
                       </div>
-
-                      <div className="text-center pt-10">
-                          <p className="text-slate-400 text-sm uppercase tracking-widest font-bold mb-4">Authorized access only</p>
-                          <button 
-                              onClick={() => setShowLoginModal(true)}
-                              className="bg-black text-white hover:bg-slate-800 px-8 py-4 font-bold uppercase tracking-wide shadow-lg transition-all"
-                          >
-                              Access Dashboard
-                          </button>
-                      </div>
+                      <div className="text-center pt-10"><p className="text-slate-400 text-sm uppercase tracking-widest font-bold mb-4">Authorized access only</p><button onClick={() => setShowLoginModal(true)} className="bg-black text-white hover:bg-slate-800 px-8 py-4 font-bold uppercase tracking-wide shadow-lg transition-all">Access Dashboard</button></div>
                   </div>
               ) : (
-                  // PRIVATE DASHBOARD VIEW
                   <>
-                      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                          <h1 className="text-2xl font-bold text-slate-900">
-                              Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}
-                          </h1>
-                          <p className="text-slate-500 text-sm">
-                              Here is your daily distribution overview.
-                          </p>
-                      </div>
-
+                      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500"><h1 className="text-2xl font-bold text-slate-900">Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}</h1><p className="text-slate-500 text-sm">Here is your daily distribution overview.</p></div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      {/* Card 1 */}
-                      <div className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500">
-                          <div>
-                          <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p>
-                          <h3 className="text-3xl font-black text-slate-900">{deliveries.length}</h3>
-                          </div>
-                          <div className="bg-yellow-50 p-3 rounded-full">
-                          <Package className="w-6 h-6 text-[#FFC600]" />
-                          </div>
-                      </div>
-                      {/* Card 2 */}
-                      <div className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-75">
-                          <div>
-                          <p className="text-xs font-bold text-slate-400 uppercase mb-1">Patients Reached</p>
-                          <h3 className="text-3xl font-black text-slate-900">{new Set(deliveries.map(d => d.patient_id)).size}</h3>
-                          </div>
-                          <div className="bg-slate-100 p-3 rounded-full">
-                          <Users className="w-6 h-6 text-slate-900" />
-                          </div>
-                      </div>
-                      {/* Card 3 */}
-                      <div className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150">
-                          <div>
-                          <p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p>
-                          <h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3>
-                          </div>
-                          <div className="bg-slate-100 p-3 rounded-full">
-                          <Building2 className="w-6 h-6 text-slate-900" />
-                          </div>
-                      </div>
+                      <div className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{deliveries.length}</h3></div><div className="bg-yellow-50 p-3 rounded-full"><Package className="w-6 h-6 text-[#FFC600]" /></div></div>
+                      <div className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-75"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Patients Reached</p><h3 className="text-3xl font-black text-slate-900">{new Set(deliveries.map(d => d.patient_id)).size}</h3></div><div className="bg-slate-100 p-3 rounded-full"><Users className="w-6 h-6 text-slate-900" /></div></div>
+                      <div className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
                       </div>
                   </>
               )}
             </div>
           )}
 
-          {/* CUSTODY TAB */}
           {activeTab === 'custody' && (
              !user ? (
                  <LockedState title="Inventory Locked" description="Authorized personnel only." />
              ) : (
                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
-                    
-                    {/* TOP SECTION: MY REP STOCK */}
                     <div className="bg-white shadow-sm border-t-4 border-[#FFC600]">
                         <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                            <div>
-                                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                                    <Briefcase className="w-6 h-6 text-[#FFC600]" /> My Inventory
-                                </h2>
-                                <p className="text-xs text-slate-500 mt-1 uppercase tracking-wide">Medical Rep Stock (You)</p>
-                            </div>
-                            <div className="text-right">
-                                <span className="text-5xl font-black text-slate-900 tracking-tighter">
-                                    {repCustody?.current_stock || 0}
-                                </span>
-                                <span className="text-xs text-slate-500 block uppercase font-bold mt-1">Pens Available</span>
-                            </div>
+                            <div><h2 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Briefcase className="w-6 h-6 text-[#FFC600]" /> My Inventory</h2><p className="text-xs text-slate-500 mt-1 uppercase tracking-wide">Medical Rep Stock (You)</p></div>
+                            <div className="text-right"><span className="text-5xl font-black text-slate-900 tracking-tighter">{repCustody?.current_stock || 0}</span><span className="text-xs text-slate-500 block uppercase font-bold mt-1">Pens Available</span></div>
                         </div>
-                        
                         <div className="p-6 bg-slate-900 text-white flex flex-col md:flex-row gap-4 items-start">
                             <div className="flex-1">
                                 <h3 className="font-bold text-white flex items-center gap-2"><Package className="w-4 h-4 text-[#FFC600]" /> Receive Pens</h3>
                                 <p className="text-xs text-slate-400 mb-3">Add stock received from Patient Educator.</p>
-                                
-                                <form 
-                                    onSubmit={handleReceiveStock} 
-                                    className="flex flex-wrap gap-3 items-end w-full"
-                                >
+                                <form onSubmit={handleReceiveStock} className="flex flex-wrap gap-3 items-end w-full">
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source Educator</label>
-                                        <input 
-                                            type="text" 
-                                            required
-                                            placeholder="Educator Name"
-                                            className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40"
-                                            value={receiveForm.educatorName}
-                                            onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
-                                            list="educator-suggestions"
-                                        />
-                                        <datalist id="educator-suggestions">
-                                            {educatorSuggestions.map((name, i) => <option key={i} value={name} />)}
-                                        </datalist>
+                                        <input type="text" required placeholder="Educator Name" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40" value={receiveForm.educatorName} onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})} list="educator-suggestions" />
+                                        <datalist id="educator-suggestions">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist>
                                     </div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
-                                        <input 
-                                            type="number" 
-                                            min="1"
-                                            className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20"
-                                            placeholder="0"
-                                            value={receiveForm.quantity}
-                                            onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
-                                        />
-                                    </div>
-                                    <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">
-                                        Add to Stock
-                                    </button>
+                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label><input type="number" min="1" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20" placeholder="0" value={receiveForm.quantity} onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})} /></div>
+                                    <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">Add to Stock</button>
                                 </form>
                             </div>
-
-                            {/* Recent Inbound History */}
                             <div className="w-full md:w-64 border-l border-slate-700 pl-4">
                                 <h4 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2"><History className="w-3 h-3" /> Recent Additions</h4>
                                 <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
-                                    {stockTransactions
-                                        .filter(t => t.custody_id === repCustody?.id && t.quantity > 0)
-                                        .slice(0, 5)
-                                        .map(t => (
-                                            <div key={t.id} className="text-[10px] text-slate-300 flex justify-between items-center group">
-                                                <span>{formatDateFriendly(t.transaction_date)}</span>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
-                                                    <button onClick={() => openEditModal('stock', t)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-white transition-opacity">
-                                                        <Pencil className="w-3 h-3" />
-                                                    </button>
-                                                </div>
+                                    {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).slice(0, 5).map(t => (
+                                        <div key={t.id} className="text-[10px] text-slate-300 flex justify-between items-center group">
+                                            <span>{formatDateFriendly(t.transaction_date)}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
+                                                <button onClick={() => handleDeleteItem('tx', t.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-500 transition-opacity"><Trash2 className="w-3 h-3" /></button>
                                             </div>
+                                        </div>
                                     ))}
-                                    {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).length === 0 && (
-                                        <p className="text-[10px] text-slate-500 italic">No recent additions.</p>
-                                    )}
+                                    {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).length === 0 && <p className="text-[10px] text-slate-500 italic">No recent additions.</p>}
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    {/* SECOND SECTION: CLINIC NETWORK & TRANSFERS */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        
-                        {/* Left: Clinic List */}
                         <div className="lg:col-span-2 bg-white shadow-sm border border-slate-200">
                             <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                                 <h3 className="font-bold text-slate-800 flex items-center gap-2"><Store className="w-5 h-5" /> Clinic / Pharmacy Network</h3>
-                                <div className="flex items-center gap-3">
-                                    <button onClick={() => setShowClinicModal(true)} className="text-xs font-bold uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                                        <Plus className="w-3 h-3" /> Add Clinic
-                                    </button>
-                                    <span className="text-xs font-bold bg-slate-200 px-2 py-1 rounded text-slate-600">{custodies.filter(c => c.type === 'clinic').length} Locations</span>
-                                </div>
+                                <div className="flex items-center gap-3"><button onClick={() => setShowClinicModal(true)} className="text-xs font-bold uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1"><Plus className="w-3 h-3" /> Add Clinic</button><span className="text-xs font-bold bg-slate-200 px-2 py-1 rounded text-slate-600">{custodies.filter(c => c.type === 'clinic').length} Locations</span></div>
                             </div>
                             <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto custom-scrollbar">
                                 {custodies.filter(c => c.type === 'clinic').map(clinic => (
                                     <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group flex justify-between items-center">
-                                        <div>
-                                            <h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4>
-                                            <p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p>
-                                        </div>
-                                        
+                                        <div><h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4><p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p></div>
                                         <div className="flex items-center gap-6">
-                                             <div className="text-right">
-                                                <span className="block text-2xl font-black text-slate-900">{clinic.current_stock || 0}</span>
-                                                <span className="text-[10px] text-slate-400 uppercase font-bold">Pens</span>
-                                             </div>
-
-                                            <button 
-                                                onClick={() => {
-                                                    setTransferForm(prev => ({...prev, toCustodyId: clinic.id, educatorName: ''}));
-                                                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-                                                }}
-                                                className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-2 text-xs font-bold uppercase rounded flex items-center gap-1"
-                                            >
-                                                Supply <ArrowRight className="w-3 h-3" />
-                                            </button>
+                                             <div className="text-right"><span className="block text-2xl font-black text-slate-900">{clinic.current_stock || 0}</span><span className="text-[10px] text-slate-400 uppercase font-bold">Pens</span></div>
+                                            <button onClick={() => { setTransferForm(prev => ({...prev, toCustodyId: clinic.id, educatorName: ''})); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }} className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-2 text-xs font-bold uppercase rounded flex items-center gap-1">Supply <ArrowRight className="w-3 h-3" /></button>
                                         </div>
                                     </div>
                                 ))}
-                                {custodies.filter(c => c.type === 'clinic').length === 0 && (
-                                    <div className="p-8 text-center text-slate-400 italic">No clinics registered yet.</div>
-                                )}
+                                {custodies.filter(c => c.type === 'clinic').length === 0 && <div className="p-8 text-center text-slate-400 italic">No clinics registered yet.</div>}
                             </div>
                         </div>
 
-                        {/* Right: Actions */}
                         <div className="space-y-6">
-                            {/* Transfer / Supply Stock */}
                             <div className="bg-white shadow-sm border-l-4 border-blue-500 p-6">
                                 <h3 className="text-sm font-bold mb-4 uppercase text-blue-900 flex items-center gap-2"><ArrowLeftRight className="w-4 h-4" /> Supply Clinic</h3>
                                 <form onSubmit={handleTransferStock} className="space-y-4">
                                     <div>
-                                        <div className="flex justify-between items-end mb-1">
-                                            <label className="block text-[10px] font-bold text-slate-400 uppercase">Destination</label>
-                                            <button 
-                                                type="button"
-                                                onClick={() => setShowClinicModal(true)}
-                                                className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
-                                            >
-                                                <Plus className="w-3 h-3" /> New
-                                            </button>
-                                        </div>
-                                        <select 
-                                            className="w-full border p-2 bg-slate-50 text-sm"
-                                            value={transferForm.toCustodyId}
-                                            onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})}
-                                            required
-                                        >
-                                            <option value="">-- Select Clinic --</option>
-                                            {custodies.filter(c => c.type === 'clinic').map(c => (
-                                                <option key={c.id} value={c.id}>{c.name}</option>
-                                            ))}
-                                        </select>
+                                        <div className="flex justify-between items-end mb-1"><label className="block text-[10px] font-bold text-slate-400 uppercase">Destination</label><button type="button" onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div>
+                                        <select className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.toCustodyId} onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})} required><option value="">-- Select Clinic --</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name}</option>))}</select>
                                     </div>
-                                    
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity (Pens)</label>
-                                        <input 
-                                            type="number" 
-                                            min="1"
-                                            className="w-full border p-2 bg-slate-50 text-sm font-bold"
-                                            value={transferForm.quantity}
-                                            onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
-                                        />
-                                    </div>
-
+                                    <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity (Pens)</label><input type="number" min="1" className="w-full border p-2 bg-slate-50 text-sm font-bold" value={transferForm.quantity} onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})} /></div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Source of Stock</label>
-                                        <div className="flex flex-col gap-2">
-                                            <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
-                                                <input 
-                                                    type="radio" 
-                                                    name="sourceType" 
-                                                    checked={transferForm.sourceType === 'rep'}
-                                                    onChange={() => setTransferForm({...transferForm, sourceType: 'rep', educatorName: ''})}
-                                                />
-                                                <span className="text-xs font-bold">My Inventory (Rep)</span>
-                                                <span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span>
-                                            </label>
-                                        </div>
+                                        <div className="flex flex-col gap-2"><label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer"><input type="radio" name="sourceType" checked={transferForm.sourceType === 'rep'} onChange={() => setTransferForm({...transferForm, sourceType: 'rep', educatorName: ''})} /><span className="text-xs font-bold">My Inventory (Rep)</span><span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span></label></div>
                                     </div>
-                                    
-                                    <button type="submit" className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700">
-                                        Confirm Transfer
-                                    </button>
+                                    <button type="submit" className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700">Confirm Transfer</button>
                                 </form>
                             </div>
-
                         </div>
                     </div>
                 </div>
              )
           )}
 
-          {/* DELIVERY WORKFLOW */}
           {activeTab === 'deliver' && (
             !user ? (
-                <LockedState 
-                  title="Delivery Module Locked" 
-                  description="You must be a registered distributor or HCP to log new deliveries." 
-                />
+                <LockedState title="Delivery Module Locked" description="You must be a registered distributor or HCP to log new deliveries." />
             ) : (
               <div className="bg-white shadow-lg border-t-4 border-[#FFC600] max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-500 relative">
-                  
-                  <button 
-                    onClick={handleCancelDelivery}
-                    className="absolute top-4 right-4 text-slate-400 hover:text-red-500 z-10 bg-slate-800/50 hover:bg-red-50 p-2 rounded-full transition-colors border border-transparent hover:border-red-200"
-                    title="Cancel Transaction"
-                  >
-                      <X className="w-4 h-4" />
-                  </button>
-
-                  <div className="bg-slate-900 text-white px-8 py-6">
-                      <h2 className="text-xl font-bold flex items-center gap-2">
-                      <Syringe className="w-5 h-5 text-[#FFC600]" />
-                      New Pen Delivery
-                      </h2>
-                      <p className="text-slate-400 text-sm mt-1">Register a transaction and assign insulin product.</p>
-                  </div>
-                  
+                  <button onClick={handleCancelDelivery} className="absolute top-4 right-4 text-slate-400 hover:text-red-500 z-10 bg-slate-800/50 hover:bg-red-50 p-2 rounded-full transition-colors border border-transparent hover:border-red-200" title="Cancel Transaction"><X className="w-4 h-4" /></button>
+                  <div className="bg-slate-900 text-white px-8 py-6"><h2 className="text-xl font-bold flex items-center gap-2"><Syringe className="w-5 h-5 text-[#FFC600]" /> New Pen Delivery</h2><p className="text-slate-400 text-sm mt-1">Register a transaction and assign insulin product.</p></div>
                   <div className="p-8">
-                      {/* STEP 1: PATIENT */}
                       <div className={`transition-opacity ${step !== 1 ? 'opacity-50 pointer-events-none hidden' : ''}`}>
                       <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Step 1: Identify Patient</label>
-                      <div className="flex gap-2 mb-4">
-                          <input 
-                              type="text" 
-                              placeholder="Search by National ID or Phone" 
-                              className="flex-1 border border-slate-300 p-3 bg-slate-50 font-mono focus:ring-2 focus:ring-[#FFC600] outline-none"
-                              value={nidSearch}
-                              onChange={(e) => setNidSearch(e.target.value)}
-                              onKeyDown={(e) => e.key === 'Enter' && handlePatientSearch()}
-                          />
-                          <button 
-                              onClick={handlePatientSearch}
-                              className="bg-black text-white px-6 font-bold uppercase text-xs"
-                          >
-                              Search
-                          </button>
-                      </div>
-
+                      <div className="flex gap-2 mb-4"><input type="text" placeholder="Search by National ID or Phone" className="flex-1 border border-slate-300 p-3 bg-slate-50 font-mono focus:ring-2 focus:ring-[#FFC600] outline-none" value={nidSearch} onChange={(e) => setNidSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handlePatientSearch()} /><button onClick={handlePatientSearch} className="bg-black text-white px-6 font-bold uppercase text-xs">Search</button></div>
                       {foundPatient ? (
-                          <div className="bg-green-50 border border-green-200 p-4 mb-6 animate-in fade-in">
-                              <div className="flex items-start gap-3">
-                                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5" />
-                                  <div className="flex-1">
-                                      <p className="font-bold text-green-800">Patient Found</p>
-                                      <p className="text-sm text-green-700">{foundPatient.full_name}</p>
-                                      <p className="text-xs text-green-600 font-mono">{foundPatient.national_id} | {foundPatient.phone_number}</p>
-                                  </div>
-                              </div>
-                          </div>
+                          <div className="bg-green-50 border border-green-200 p-4 mb-6 animate-in fade-in"><div className="flex items-start gap-3"><CheckCircle className="w-5 h-5 text-green-600 mt-0.5" /><div className="flex-1"><p className="font-bold text-green-800">Patient Found</p><p className="text-sm text-green-700">{foundPatient.full_name}</p><p className="text-xs text-green-600 font-mono">{foundPatient.national_id} | {foundPatient.phone_number}</p></div></div></div>
                       ) : hasSearched && (
-                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6 animate-in fade-in">
-                              <p className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[#FFC600]" /> Patient not found. Register new?</p>
-                              <div className="space-y-3">
-                                  <input 
-                                      type="text" 
-                                      placeholder="Full Name" 
-                                      className="w-full border border-slate-300 p-2 text-sm"
-                                      value={newPatientForm.full_name}
-                                      onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})}
-                                  />
-                                  <input 
-                                      type="text" 
-                                      placeholder="Phone Number" 
-                                      className="w-full border border-slate-300 p-2 text-sm"
-                                      value={newPatientForm.phone_number}
-                                      onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})}
-                                  />
-                                  <button onClick={handleCreatePatient} className="bg-black text-white px-4 py-2 text-xs font-bold uppercase">Save & Select Patient</button>
-                              </div>
-                          </div>
+                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6 animate-in fade-in"><p className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[#FFC600]" /> Patient not found. Register new?</p><div className="space-y-3"><input type="text" placeholder="Full Name" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} /><input type="text" placeholder="Phone Number" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} /><button onClick={handleCreatePatient} className="bg-black text-white px-4 py-2 text-xs font-bold uppercase">Save & Select Patient</button></div></div>
                       )}
-
                       {foundPatient && (
                           <>
-                             {duplicateWarning && (
-                                <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 animate-in slide-in-from-top-2">
-                                    <div className="flex items-start gap-3">
-                                        <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
-                                        <div>
-                                            <p className="font-bold text-red-800 uppercase text-xs">Duplication Alert</p>
-                                            <p className="text-sm text-red-700 mb-1">This patient has already received a pen recently.</p>
-                                            <p className="text-xs text-red-600">Please verify: Is this a replacement? Or a different product assignment?</p>
-                                        </div>
-                                    </div>
-                                </div>
-                             )}
-                             <button 
-                                onClick={() => setStep(2)} 
-                                className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2"
-                             >
-                                {duplicateWarning ? 'Acknowledge & Continue' : 'Next: Delivery Details'} <ArrowRight className="w-4 h-4" />
-                             </button>
+                             {duplicateWarning && (<div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 animate-in slide-in-from-top-2"><div className="flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-red-600 shrink-0" /><div><p className="font-bold text-red-800 uppercase text-xs">Duplication Alert</p><p className="text-sm text-red-700 mb-1">This patient has already received a pen recently.</p><p className="text-xs text-red-600">Please verify: Is this a replacement? Or a different product assignment?</p></div></div></div>)}
+                             <button onClick={() => setStep(2)} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">{duplicateWarning ? 'Acknowledge & Continue' : 'Next: Delivery Details'} <ArrowRight className="w-4 h-4" /></button>
                           </>
                       )}
                       </div>
 
-                      {/* STEP 2: DETAILS */}
                       <div className={`transition-opacity ${step !== 2 ? 'opacity-50 pointer-events-none hidden' : ''}`}>
-                      <div className="flex justify-between items-center mb-6">
-                          <label className="block text-xs font-bold text-slate-500 uppercase">Step 2: Transaction Details</label>
-                          <button onClick={() => setStep(1)} className="text-xs text-slate-400 underline flex items-center gap-1"><Undo2 className="w-3 h-3"/> Change Patient</button>
-                      </div>
-
+                      <div className="flex justify-between items-center mb-6"><label className="block text-xs font-bold text-slate-500 uppercase">Step 2: Transaction Details</label><button onClick={() => setStep(1)} className="text-xs text-slate-400 underline flex items-center gap-1"><Undo2 className="w-3 h-3"/> Change Patient</button></div>
                       <div className="space-y-6">
-                          {/* Row 1 */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-800 mb-1">Delivery Date</label>
-                                    <input 
-                                        type="date"
-                                        required
-                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                        value={deliveryDate}
-                                        onChange={e => setDeliveryDate(e.target.value)}
-                                    />
-                                </div>
-                                <div>
-                                    <div className="flex justify-between items-end mb-1">
-                                        <label className="block text-sm font-bold text-slate-800">From Custody (Source) <span className="text-red-500">*</span></label>
-                                        <button 
-                                            onClick={() => setShowClinicModal(true)}
-                                            className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
-                                        >
-                                            <Plus className="w-3 h-3" /> Add New
-                                        </button>
-                                    </div>
-                                    <select 
-                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                        value={selectedCustody}
-                                        onChange={e => setSelectedCustody(e.target.value)}
-                                    >
-                                        <option value="">-- Select Source --</option>
-                                        {custodies.filter(c => c.type === 'rep').map(c => (
-                                            <option key={c.id} value={c.id}>My Inventory (Rep)</option>
-                                        ))}
-                                        <option disabled>──────────</option>
-                                        {custodies.filter(c => c.type === 'clinic').map(c => (
-                                            <option key={c.id} value={c.id}>{c.name} (Clinic)</option>
-                                        ))}
-                                    </select>
-                                </div>
-                          </div>
-                          
-                          {/* Row 2 */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <div className="flex justify-between items-end mb-1">
-                                        <label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label>
-                                        <button 
-                                            onClick={() => setShowHCPModal(true)}
-                                            className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"
-                                        >
-                                            <Plus className="w-3 h-3" /> New
-                                        </button>
-                                    </div>
-                                    <select 
-                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                        value={selectedHCP}
-                                        onChange={e => setSelectedHCP(e.target.value)}
-                                    >
-                                        <option value="">-- Select Doctor --</option>
-                                        {hcps.map(h => (
-                                            <option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label>
-                                    <input 
-                                        type="date"
-                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                        value={rxDate}
-                                        onChange={e => setRxDate(e.target.value)}
-                                    />
-                                </div>
-                          </div>
-
-                           {/* Row 3: Educator Info */}
-                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label>
-                                    <input 
-                                        type="text"
-                                        placeholder="Name"
-                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                        value={educatorName}
-                                        onChange={e => setEducatorName(e.target.value)}
-                                        list="educator-list-delivery"
-                                    />
-                                    <datalist id="educator-list-delivery">
-                                        {educatorSuggestions.map((name, i) => <option key={i} value={name} />)}
-                                    </datalist>
-                                    <div className="flex flex-wrap gap-1 mt-1">
-                                        {educatorSuggestions.slice(0, 6).map(s => (
-                                            <button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label>
-                                    <input 
-                                        type="date"
-                                        className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none"
-                                        value={educatorDate}
-                                        onChange={e => setEducatorDate(e.target.value)}
-                                    />
-                                </div>
-                          </div>
-
-                          <div>
-                              <label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label>
-                              <div className="grid grid-cols-1 gap-2">
-                                  {PRODUCTS.map(p => (
-                                      <button
-                                          key={p.id}
-                                          onClick={() => setSelectedProduct(p.id)}
-                                          className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}
-                                      >
-                                          <div className="font-bold text-sm">{p.name}</div>
-                                          <div className="text-xs text-slate-500 uppercase">{p.type}</div>
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-
-                          <button 
-                              onClick={handleSubmitDelivery} 
-                              className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}
-                          >
-                              {duplicateWarning ? 'Confirm Duplicate Entry' : 'Confirm Delivery'}
-                          </button>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Delivery Date</label><input type="date" required className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} /></div><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">From Custody (Source) <span className="text-red-500">*</span></label><button onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Add New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedCustody} onChange={e => setSelectedCustody(e.target.value)}><option value="">-- Select Source --</option>{custodies.filter(c => c.type === 'rep').map(c => (<option key={c.id} value={c.id}>My Inventory (Rep)</option>))}<option disabled>──────────</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name} (Clinic)</option>))}</select></div></div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select Doctor --</option>{hcps.map(h => (<option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>))}</select></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div></div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label><input type="text" placeholder="Name" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-list-delivery" /><datalist id="educator-list-delivery">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist><div className="flex flex-wrap gap-1 mt-1">{educatorSuggestions.slice(0, 6).map(s => (<button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>))}</div></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div></div>
+                          <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => setSelectedProduct(p.id)} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
+                          <button onClick={handleSubmitDelivery} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>{duplicateWarning ? 'Confirm Duplicate Entry' : 'Confirm Delivery'}</button>
                       </div>
                       </div>
                   </div>
@@ -1296,72 +773,23 @@ const App: React.FC = () => {
             )
           )}
 
-          {/* DATABASE / HISTORY VIEW */}
           {activeTab === 'database' && (
             !user ? (
-              <LockedState 
-                  title="Database Access Locked" 
-                  description="Full system records are strictly confidential and available only to authorized admin." 
-                />
+              <LockedState title="Database Access Locked" description="Full system records are strictly confidential and available only to authorized admin." />
             ) : (
               <div className="space-y-6">
-                  {/* Sub Navigation */}
                   <div className="flex gap-4 border-b border-slate-200 pb-2 overflow-x-auto">
-                      <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
-                          Transactions
-                      </button>
-                      <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
-                          Doctors (HCPs)
-                      </button>
-                      <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
-                          Locations
-                      </button>
-                      <button onClick={() => setDbView('stock')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>
-                          Stock History
-                      </button>
+                      <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Transactions</button>
+                      <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Doctors (HCPs)</button>
+                      <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Locations</button>
+                      <button onClick={() => setDbView('stock')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Stock History</button>
                   </div>
 
                   {dbView === 'deliveries' && (
                     <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto">
                         <table className="w-full text-left min-w-[800px]">
-                        <thead className="bg-slate-50 border-b border-slate-200">
-                            <tr>
-                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th>
-                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th>
-                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product Assigned</th>
-                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th>
-                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th>
-                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {deliveries.map(d => (
-                            <tr key={d.id} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-6 py-4 font-mono text-sm text-slate-600">
-                                    {formatDateFriendly(d.delivery_date)}
-                                </td>
-                                <td className="px-6 py-4">
-                                    <div className="font-bold text-slate-800">{d.patient?.full_name}</div>
-                                    <div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div>
-                                </td>
-                                <td className="px-6 py-4">
-                                    <span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">
-                                        {getProductName(d.product_id)}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 text-sm text-slate-600">
-                                    {d.hcp?.full_name}
-                                    {d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-slate-600">
-                                    {d.educator_name || '-'}
-                                </td>
-                                <td className="px-6 py-4">
-                                    <button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
-                                </td>
-                            </tr>
-                            ))}
-                        </tbody>
+                        <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
+                        <tbody className="divide-y divide-slate-100">{deliveries.map(d => (<tr key={d.id} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td><td className="px-6 py-4"><div className="font-bold text-slate-800">{d.patient?.full_name}</div><div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div></td><td className="px-6 py-4"><span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">{getProductName(d.product_id)}</span></td><td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}{d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}</td><td className="px-6 py-4 text-sm text-slate-600">{d.educator_name || '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                         </table>
                         {deliveries.length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
                     </div>
@@ -1369,31 +797,11 @@ const App: React.FC = () => {
 
                   {dbView === 'hcps' && (
                        <div className="space-y-4 animate-in fade-in">
-                           <div className="flex justify-end">
-                               <button onClick={() => setShowHCPModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Doctor</button>
-                           </div>
+                           <div className="flex justify-end"><button onClick={() => setShowHCPModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Doctor</button></div>
                            <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
                                 <table className="w-full text-left">
-                                    <thead className="bg-slate-50 border-b border-slate-200">
-                                        <tr>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {hcps.map(h => (
-                                            <tr key={h.id}>
-                                                <td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td>
-                                                <td className="px-6 py-4 text-slate-600">{h.specialty || '-'}</td>
-                                                <td className="px-6 py-4 text-slate-600">{h.hospital}</td>
-                                                <td className="px-6 py-4">
-                                                    <button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
+                                    <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
+                                    <tbody className="divide-y divide-slate-100">{hcps.map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4 text-slate-600">{h.specialty || '-'}</td><td className="px-6 py-4 text-slate-600">{h.hospital}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                                 </table>
                            </div>
                        </div>
@@ -1401,33 +809,11 @@ const App: React.FC = () => {
 
                   {dbView === 'locations' && (
                       <div className="space-y-4 animate-in fade-in">
-                           <div className="flex justify-end">
-                               <button onClick={() => setShowClinicModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Location</button>
-                           </div>
+                           <div className="flex justify-end"><button onClick={() => setShowClinicModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Location</button></div>
                            <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
                                 <table className="w-full text-left">
-                                    <thead className="bg-slate-50 border-b border-slate-200">
-                                        <tr>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Location Name</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Stock Level</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered Date</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {custodies.map(c => (
-                                            <tr key={c.id}>
-                                                <td className="px-6 py-4 font-bold text-slate-800">{c.name}</td>
-                                                <td className="px-6 py-4 uppercase text-xs font-bold text-slate-500">{c.type}</td>
-                                                <td className="px-6 py-4 font-mono">{c.current_stock}</td>
-                                                <td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td>
-                                                <td className="px-6 py-4">
-                                                    <button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
+                                    <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Location Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Stock Level</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
+                                    <tbody className="divide-y divide-slate-100">{custodies.map(c => (<tr key={c.id}><td className="px-6 py-4 font-bold text-slate-800">{c.name}</td><td className="px-6 py-4 uppercase text-xs font-bold text-slate-500">{c.type}</td><td className="px-6 py-4 font-mono">{c.current_stock}</td><td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                                 </table>
                            </div>
                        </div>
@@ -1437,33 +823,8 @@ const App: React.FC = () => {
                       <div className="space-y-4 animate-in fade-in">
                            <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
                                 <table className="w-full text-left">
-                                    <thead className="bg-slate-50 border-b border-slate-200">
-                                        <tr>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Custody</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Change</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Reason</th>
-                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {stockTransactions.map(s => {
-                                            const custody = custodies.find(c => c.id === s.custody_id);
-                                            return (
-                                                <tr key={s.id}>
-                                                    <td className="px-6 py-4 text-slate-600 font-mono text-sm">{formatDateFriendly(s.transaction_date)}</td>
-                                                    <td className="px-6 py-4 font-bold text-slate-800">{custody?.name || s.custody_id}</td>
-                                                    <td className={`px-6 py-4 font-mono font-bold ${s.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                        {s.quantity > 0 ? '+' : ''}{s.quantity}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-slate-600 text-sm">{s.source}</td>
-                                                    <td className="px-6 py-4">
-                                                        <button onClick={() => openEditModal('stock', s)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
+                                    <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Custody</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Change</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Reason</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
+                                    <tbody className="divide-y divide-slate-100">{stockTransactions.map(s => { const custody = custodies.find(c => c.id === s.custody_id); return (<tr key={s.id}><td className="px-6 py-4 text-slate-600 font-mono text-sm">{formatDateFriendly(s.transaction_date)}</td><td className="px-6 py-4 font-bold text-slate-800">{custody?.name || s.custody_id}</td><td className={`px-6 py-4 font-mono font-bold ${s.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{s.quantity > 0 ? '+' : ''}{s.quantity}</td><td className="px-6 py-4 text-slate-600 text-sm">{s.source}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('stock', s)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('stock', s.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>);})}</tbody>
                                 </table>
                            </div>
                            {stockTransactions.length === 0 && <div className="text-center text-slate-400 p-8">No stock history available</div>}
@@ -1474,22 +835,8 @@ const App: React.FC = () => {
           )}
         </main>
       </div>
-
-      {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-6 shrink-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 text-center text-slate-400 text-xs">
-            <p>SPIN - Supply Insulin Pen Network &copy; 2025 | Version {METADATA.version}</p>
-        </div>
-      </footer>
-
-      {user && (
-        <AIReportModal 
-            isOpen={showAIModal} 
-            onClose={() => setShowAIModal(false)} 
-            deliveries={deliveries} 
-            userEmail={user.email} 
-        />
-      )}
+      <footer className="bg-white border-t border-slate-200 py-6 shrink-0 z-10"><div className="max-w-7xl mx-auto px-4 text-center text-slate-400 text-xs"><p>SPIN - Supply Insulin Pen Network &copy; 2025 | Version {METADATA.version}</p></div></footer>
+      {user && <AIReportModal isOpen={showAIModal} onClose={() => setShowAIModal(false)} deliveries={deliveries} userEmail={user.email} />}
     </div>
   );
 };

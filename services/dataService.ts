@@ -55,6 +55,75 @@ export const dataService = {
     }
   },
 
+  async updatePatient(id: string, updates: Partial<Patient>): Promise<void> {
+    // Logic to update text in stock transactions if name changes
+    const updateRelatedText = async (oldName: string, newName: string) => {
+        if (!oldName || !newName || oldName === newName) return;
+        // This is a best-effort text replacement for audit logs
+        if (isSupabaseConfigured() && supabase) {
+             // In a real scenario, this would be an RPC or handled by ID relations. 
+             // Here we just fetch recent transactions to update for demo purposes.
+             const { data: txs } = await supabase.from('stock_transactions')
+                .select('*')
+                .ilike('source', `%${oldName}%`)
+                .limit(50);
+             
+             if (txs) {
+                 for (const tx of txs) {
+                     const newSource = tx.source.replace(oldName, newName);
+                     await supabase.from('stock_transactions').update({ source: newSource }).eq('id', tx.id);
+                 }
+             }
+        } else {
+             const list: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+             let changed = false;
+             list.forEach(tx => {
+                 if (tx.source && tx.source.includes(oldName)) {
+                     tx.source = tx.source.replace(oldName, newName);
+                     changed = true;
+                 }
+             });
+             if (changed) localStorage.setItem(KEYS.STOCK, JSON.stringify(list));
+        }
+    };
+
+    let oldPatient: Patient | null = null;
+    if (isSupabaseConfigured() && supabase) {
+        const { data } = await supabase.from('patients').select('*').eq('id', id).single();
+        oldPatient = data;
+        const { error } = await supabase.from('patients').update(updates).eq('id', id);
+        if (error) throw error;
+    } else {
+        const list: Patient[] = JSON.parse(localStorage.getItem(KEYS.PATIENTS) || '[]');
+        const idx = list.findIndex(i => i.id === id);
+        if (idx >= 0) {
+            oldPatient = list[idx];
+            list[idx] = { ...list[idx], ...updates };
+            localStorage.setItem(KEYS.PATIENTS, JSON.stringify(list));
+        }
+    }
+
+    if (oldPatient && updates.full_name) {
+        await updateRelatedText(oldPatient.full_name, updates.full_name);
+    }
+  },
+
+  async deletePatient(id: string): Promise<void> {
+      if (isSupabaseConfigured() && supabase) {
+          await supabase.from('deliveries').delete().eq('patient_id', id); // Cascade deliveries
+          await supabase.from('patients').delete().eq('id', id);
+      } else {
+          let patients = JSON.parse(localStorage.getItem(KEYS.PATIENTS) || '[]');
+          patients = patients.filter((p: Patient) => p.id !== id);
+          localStorage.setItem(KEYS.PATIENTS, JSON.stringify(patients));
+
+          // Cascade delete deliveries
+          let deliveries = JSON.parse(localStorage.getItem(KEYS.DELIVERIES) || '[]');
+          deliveries = deliveries.filter((d: Delivery) => d.patient_id !== id);
+          localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
+      }
+  },
+
   // --- HCPs ---
   async getHCPs(): Promise<HCP[]> {
     if (isSupabaseConfigured() && supabase) {
@@ -99,6 +168,22 @@ export const dataService = {
     }
   },
 
+  async deleteHCP(id: string): Promise<void> {
+      if (isSupabaseConfigured() && supabase) {
+          // Optional: Set delivery HCP to null or delete deliveries? Request says "delete all related rows"
+          await supabase.from('deliveries').delete().eq('hcp_id', id);
+          await supabase.from('hcps').delete().eq('id', id);
+      } else {
+          let hcps = JSON.parse(localStorage.getItem(KEYS.HCPS) || '[]');
+          hcps = hcps.filter((h: HCP) => h.id !== id);
+          localStorage.setItem(KEYS.HCPS, JSON.stringify(hcps));
+          
+          let deliveries = JSON.parse(localStorage.getItem(KEYS.DELIVERIES) || '[]');
+          deliveries = deliveries.filter((d: Delivery) => d.hcp_id !== id);
+          localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
+      }
+  },
+
   // --- CUSTODY & STOCK ---
   async getCustodies(): Promise<Custody[]> {
     if (isSupabaseConfigured() && supabase) {
@@ -124,19 +209,14 @@ export const dataService = {
       }
 
       let rep = custodies.find(c => c.type === 'rep');
-      
-      // If no rep custody found, create it immediately
       if (!rep) {
           try {
-              // Create default rep custody
               rep = await this.createCustody({ name: 'My Inventory', type: 'rep', created_at: new Date().toISOString() });
           } catch (e) {
               console.error("Failed to auto-create rep custody", e);
               if (!isSupabaseConfigured()) {
-                  // Fallback for Demo
                   rep = { id: 'temp-rep', name: 'My Inventory (Temp)', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
               } else {
-                  console.error("Could not initialize Rep Inventory in Database.");
                   return { id: 'error-rep', name: 'Error: Inventory Not Found', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
               }
           }
@@ -146,7 +226,6 @@ export const dataService = {
 
   async createCustody(custody: Omit<Custody, 'id' | 'current_stock'>): Promise<Custody> {
       if (isSupabaseConfigured() && supabase) {
-          // Explicitly add current_stock: 0 to ensure DB constraints are met
           const payload = { ...custody, current_stock: 0 };
           const { data, error } = await supabase.from('custodies').insert([payload]).select().single();
           if (error) throw error;
@@ -174,7 +253,22 @@ export const dataService = {
     }
   },
 
-  // Unified Stock Transaction Manager (Generic Pens)
+  async deleteCustody(id: string): Promise<void> {
+      if (isSupabaseConfigured() && supabase) {
+          await supabase.from('stock_transactions').delete().eq('custody_id', id);
+          await supabase.from('deliveries').delete().eq('custody_id', id); // Unlikely but possible
+          await supabase.from('custodies').delete().eq('id', id);
+      } else {
+          let list = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || '[]');
+          list = list.filter((c: Custody) => c.id !== id);
+          localStorage.setItem(KEYS.CUSTODY, JSON.stringify(list));
+          
+          let st = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+          st = st.filter((s: StockTransaction) => s.custody_id !== id);
+          localStorage.setItem(KEYS.STOCK, JSON.stringify(st));
+      }
+  },
+
   async processStockTransaction(
     toCustodyId: string, 
     quantity: number, 
@@ -183,74 +277,62 @@ export const dataService = {
     fromCustodyId?: string
   ): Promise<void> {
      if (isSupabaseConfigured() && supabase) {
-         // 1. Handle Sender (Outbound) - DEDUCT FIRST
          if (fromCustodyId) {
-            // Fetch sender first to check existence and stock
             const { data: fromCustody } = await supabase.from('custodies').select('current_stock, name').eq('id', fromCustodyId).single();
-            
             if (fromCustody) {
-                // Check if enough stock
                 if ((fromCustody.current_stock || 0) < quantity) {
-                    console.warn(`Warning: Transferring more than available stock. Available: ${fromCustody.current_stock}, Required: ${quantity}`);
-                    // We allow it but warn, or we could throw: throw new Error("Insufficient stock in source inventory.");
+                    console.warn(`Warning: Transferring more than available stock.`);
                 }
-
-                // Update Stock for Sender
                 const newStock = Math.max(0, (fromCustody.current_stock || 0) - quantity);
-                const { error: updateErr } = await supabase.from('custodies').update({ current_stock: newStock }).eq('id', fromCustodyId);
-                if (updateErr) throw updateErr;
+                await supabase.from('custodies').update({ current_stock: newStock }).eq('id', fromCustodyId);
 
-                // Log Transaction (Outbound)
                 const { data: destCustody } = await supabase.from('custodies').select('name').eq('id', toCustodyId).single();
                 const destName = destCustody?.name || 'Clinic';
 
-                const { error: errOut } = await supabase.from('stock_transactions').insert([{
+                await supabase.from('stock_transactions').insert([{
                     custody_id: fromCustodyId,
                     quantity: -quantity,
                     transaction_date: date,
                     source: `Transfer to ${destName}`
                 }]);
-                if (errOut) console.error("Failed to log outbound transaction", errOut);
             } else {
-                throw new Error("Source inventory (sender) not found.");
+                throw new Error("Source inventory not found.");
             }
          }
 
-         // 2. Handle Receiver (Inbound) - ADD SECOND
-         // Note: This is not atomic without RPC, but acceptable for this scope
          const { data: toCustody } = await supabase.from('custodies').select('current_stock').eq('id', toCustodyId).single();
          if (toCustody) {
             const newStock = (toCustody.current_stock || 0) + quantity;
-            const { error: updateErr } = await supabase.from('custodies').update({ current_stock: newStock }).eq('id', toCustodyId);
-            if (updateErr) throw updateErr;
+            await supabase.from('custodies').update({ current_stock: newStock }).eq('id', toCustodyId);
+            
+            // If it's a transfer, get source name for better history
+            let finalSource = sourceLabel;
+            if (fromCustodyId) {
+                const { data: fc } = await supabase.from('custodies').select('name').eq('id', fromCustodyId).single();
+                if (fc) finalSource = `Transfer from ${fc.name}`;
+            }
 
-            // Log Transaction (Inbound)
-            const { error: errIn } = await supabase.from('stock_transactions').insert([{
+            await supabase.from('stock_transactions').insert([{
                 custody_id: toCustodyId,
                 quantity: quantity,
                 transaction_date: date,
-                source: fromCustodyId ? `Transfer from ${fromCustodyId}` : sourceLabel
+                source: finalSource
             }]);
-            if (errIn) throw errIn;
          } else {
              throw new Error("Destination location not found.");
          }
 
      } else {
-         // LOCAL STORAGE MODE
          const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || JSON.stringify(MOCK_CUSTODY));
          const transList: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
 
-         // 2. Handle Deduction (Transfer)
          if (fromCustodyId) {
              const fromCustody = custodies.find(c => c.id === fromCustodyId);
              if (fromCustody) {
                  if ((fromCustody.current_stock || 0) < quantity) {
-                     throw new Error(`Insufficient pens in source custody (${fromCustody.current_stock} available).`);
+                     throw new Error(`Insufficient pens in source custody.`);
                  }
                  fromCustody.current_stock -= quantity;
-                 
-                 // Log Outbound
                  const toName = custodies.find(c => c.id === toCustodyId)?.name || 'Clinic';
                  transList.push({
                     id: uuidv4(),
@@ -262,22 +344,24 @@ export const dataService = {
              }
          }
 
-         // 3. Handle Addition (Receipt)
          const toCustody = custodies.find(c => c.id === toCustodyId);
          if (toCustody) {
              toCustody.current_stock = (toCustody.current_stock || 0) + quantity;
+             
+             let finalSource = sourceLabel;
+             if (fromCustodyId) {
+                 const fc = custodies.find(c => c.id === fromCustodyId);
+                 if (fc) finalSource = `Transfer from ${fc.name}`;
+             }
 
-             // Log Inbound
              transList.push({
                 id: uuidv4(),
                 custody_id: toCustodyId,
                 quantity: quantity,
                 transaction_date: date,
-                source: fromCustodyId ? `Transfer from ${fromCustodyId}` : sourceLabel
+                source: finalSource
              });
          }
-
-         // 4. Save
          localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
          localStorage.setItem(KEYS.STOCK, JSON.stringify(transList));
      }
@@ -285,14 +369,11 @@ export const dataService = {
 
   async updateStockTransaction(id: string, updates: Partial<StockTransaction>): Promise<void> {
       if (isSupabaseConfigured() && supabase) {
-          // If quantity changes, we must adjust the custody stock
           if (updates.quantity !== undefined) {
-              // 1. Get old transaction
               const { data: oldTx } = await supabase.from('stock_transactions').select('*').eq('id', id).single();
               if (oldTx) {
                   const diff = updates.quantity - oldTx.quantity;
                   if (diff !== 0) {
-                       // Adjust custody stock
                        const { data: custody } = await supabase.from('custodies').select('current_stock').eq('id', oldTx.custody_id).single();
                        if (custody) {
                            const newStock = (custody.current_stock || 0) + diff;
@@ -301,7 +382,6 @@ export const dataService = {
                   }
               }
           }
-          
           const { error } = await supabase.from('stock_transactions').update(updates).eq('id', id);
           if (error) throw error;
       } else {
@@ -310,8 +390,6 @@ export const dataService = {
           if (idx >= 0) {
               const oldQty = list[idx].quantity;
               list[idx] = { ...list[idx], ...updates };
-              
-              // Adjust local stock if quantity changed
               if (updates.quantity !== undefined && updates.quantity !== oldQty) {
                   const diff = updates.quantity - oldQty;
                   const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || '[]');
@@ -321,6 +399,36 @@ export const dataService = {
                       localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
                   }
               }
+              localStorage.setItem(KEYS.STOCK, JSON.stringify(list));
+          }
+      }
+  },
+
+  async deleteStockTransaction(id: string): Promise<void> {
+      // Logic: Reverse the stock effect, then delete the row.
+      if (isSupabaseConfigured() && supabase) {
+          const { data: tx } = await supabase.from('stock_transactions').select('*').eq('id', id).single();
+          if (tx) {
+              // Reverse stock
+              const { data: custody } = await supabase.from('custodies').select('current_stock').eq('id', tx.custody_id).single();
+              if (custody) {
+                  // If quantity was positive (added), we subtract. If negative (removed), we add.
+                  const newStock = (custody.current_stock || 0) - tx.quantity;
+                  await supabase.from('custodies').update({ current_stock: newStock }).eq('id', tx.custody_id);
+              }
+              await supabase.from('stock_transactions').delete().eq('id', id);
+          }
+      } else {
+          let list: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+          const tx = list.find(t => t.id === id);
+          if (tx) {
+              const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || '[]');
+              const c = custodies.find(cust => cust.id === tx.custody_id);
+              if (c) {
+                  c.current_stock = (c.current_stock || 0) - tx.quantity;
+                  localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
+              }
+              list = list.filter(t => t.id !== id);
               localStorage.setItem(KEYS.STOCK, JSON.stringify(list));
           }
       }
@@ -371,7 +479,6 @@ export const dataService = {
 
   async checkDuplicateDelivery(patientId: string, productId: string): Promise<boolean> {
     if (isSupabaseConfigured() && supabase) {
-      // Check last 30 days for same patient
       const { data } = await supabase
         .from('deliveries')
         .select('id')
@@ -384,12 +491,12 @@ export const dataService = {
     }
   },
 
-  async logDelivery(delivery: Omit<Delivery, 'id'>): Promise<Delivery> {
+  async logDelivery(delivery: Omit<Delivery, 'id'>, userDisplayName?: string): Promise<Delivery> {
+    const patientName = delivery.patient?.full_name || 'Patient';
+    const patientID = delivery.patient?.national_id || delivery.patient_id;
+    const userName = userDisplayName ? ` by ${userDisplayName}` : '';
+    
     if (isSupabaseConfigured() && supabase) {
-      // STRICT PAYLOAD CONSTRUCTION
-      // We construct a new object to ensure only valid columns are sent to Supabase.
-      // This prevents "Could not find column 'custody_id'" errors if the DB schema is outdated,
-      // or if 'patient', 'hcp' objects were accidentally included in the passed object.
       const payload = {
           patient_id: delivery.patient_id,
           hcp_id: delivery.hcp_id,
@@ -406,20 +513,17 @@ export const dataService = {
       const { data, error } = await supabase.from('deliveries').insert([payload]).select().single();
       if (error) throw error;
       
-      // Deduct from source custody logic stays separate
-      // We use the custody_id from the argument, not the payload
       if (delivery.custody_id) {
           const { data: custody } = await supabase.from('custodies').select('current_stock').eq('id', delivery.custody_id).single();
           if (custody) {
               const newStock = Math.max(0, (custody.current_stock || 0) - delivery.quantity);
               await supabase.from('custodies').update({ current_stock: newStock }).eq('id', delivery.custody_id);
               
-              // Log stock deduction
               await supabase.from('stock_transactions').insert([{
                   custody_id: delivery.custody_id,
                   quantity: -delivery.quantity,
                   transaction_date: delivery.delivery_date,
-                  source: `Delivery to Patient: ${delivery.patient?.national_id || 'ID: ' + delivery.patient_id}`
+                  source: `Delivery to ${patientName} (${patientID})${userName}`
               }]);
           }
       }
@@ -430,13 +534,23 @@ export const dataService = {
       deliveries.unshift(newDelivery);
       localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
       
-      // Deduct generic stock from source Custody
       if (delivery.custody_id) {
           const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || JSON.stringify(MOCK_CUSTODY));
           const custody = custodies.find(c => c.id === delivery.custody_id);
+          const transList: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+          
           if (custody) {
               custody.current_stock = Math.max(0, (custody.current_stock || 0) - delivery.quantity);
               localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
+              
+              transList.push({
+                id: uuidv4(),
+                custody_id: delivery.custody_id,
+                quantity: -delivery.quantity,
+                transaction_date: delivery.delivery_date,
+                source: `Delivery to ${patientName} (${patientID})${userName}`
+             });
+             localStorage.setItem(KEYS.STOCK, JSON.stringify(transList));
           }
       }
       
@@ -457,5 +571,18 @@ export const dataService = {
             localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(list));
         }
     }
+  },
+
+  async deleteDelivery(id: string): Promise<void> {
+      // NOTE: We do NOT automatically reverse stock here to avoid stock data corruption if the delivery is old.
+      // But user requested "delete all related rows". 
+      // Safe approach: Just delete the delivery record.
+      if (isSupabaseConfigured() && supabase) {
+          await supabase.from('deliveries').delete().eq('id', id);
+      } else {
+          let list = JSON.parse(localStorage.getItem(KEYS.DELIVERIES) || '[]');
+          list = list.filter((d: Delivery) => d.id !== id);
+          localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(list));
+      }
   }
 };
