@@ -348,8 +348,19 @@ const App: React.FC = () => {
       e.preventDefault();
       try {
         let targetRep = await dataService.getRepCustody();
-        if (!targetRep) throw new Error("My Inventory not found");
-        setRepCustody(targetRep);
+        
+        // Auto-create if missing to avoid "My Inventory not found"
+        if (!targetRep) {
+            targetRep = await dataService.createCustody({
+                name: 'My Rep Inventory',
+                type: 'rep',
+                created_at: new Date().toISOString()
+            });
+            setRepCustody(targetRep);
+        }
+
+        if (!targetRep) throw new Error("My Inventory not found and could not be created.");
+        // setRepCustody(targetRep); 
 
         const { quantity, educatorName, date } = receiveForm;
         if (!quantity) {
@@ -384,8 +395,18 @@ const App: React.FC = () => {
         let sourceLabel = `Educator: ${educatorName || 'Unknown'}`;
 
         if (sourceType === 'rep') {
-            const r = await dataService.getRepCustody();
-            setRepCustody(r);
+            let r = await dataService.getRepCustody();
+            
+            // Auto-create if missing
+            if (!r) {
+                r = await dataService.createCustody({
+                    name: 'My Rep Inventory',
+                    type: 'rep',
+                    created_at: new Date().toISOString()
+                });
+                setRepCustody(r);
+            }
+
             if (!r || !r.id) throw new Error("Rep custody not initialized.");
             fromCustodyId = r.id;
             sourceLabel = 'Medical Rep Transfer';
