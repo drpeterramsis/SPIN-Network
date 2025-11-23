@@ -48,8 +48,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.021",
-  version: "2.0.021"
+  name: "SPIN v2.0.022",
+  version: "2.0.022"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -715,6 +715,26 @@ const App: React.FC = () => {
       return formatDateFriendly(supplies[0].transaction_date);
   };
 
+  // Helper for Product Colors
+  const getProductStyles = (id: string) => {
+    switch (id) {
+        case 'glargivin-100': return 'bg-violet-100 text-violet-800 border-violet-200';
+        case 'humaxin-r': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+        case 'humaxin-mix': return 'bg-orange-100 text-orange-800 border-orange-200';
+        default: return 'bg-blue-50 text-blue-700 border-blue-100';
+    }
+  };
+
+  const getProductButtonStyles = (id: string, selected: boolean) => {
+    if (!selected) return 'border-slate-100 hover:border-slate-300 bg-white';
+    switch(id) {
+        case 'glargivin-100': return 'border-violet-500 bg-violet-50 text-violet-900';
+        case 'humaxin-r': return 'border-yellow-500 bg-yellow-50 text-yellow-900';
+        case 'humaxin-mix': return 'border-orange-500 bg-orange-50 text-orange-900';
+        default: return 'border-slate-500 bg-slate-50';
+    }
+  };
+
   const LockedState = ({ title, description }: { title: string, description: string }) => (
     <div className="bg-white border-t-4 border-slate-200 shadow-sm p-12 text-center">
         <div className="bg-slate-100 w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6">
@@ -1147,7 +1167,17 @@ const App: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Delivery Date</label><input type="date" required className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} /></div><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">From Custody (Source) <span className="text-red-500">*</span></label><button onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Add New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedCustody} onChange={e => setSelectedCustody(e.target.value)}><option value="">-- Select Source --</option>{custodies.filter(c => c.type === 'rep').map(c => (<option key={c.id} value={c.id}>My Inventory (Rep)</option>))}<option disabled>──────────</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name.toLowerCase().includes('pharmacy') ? c.name : `${c.name} (Clinic)`}</option>))}</select></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select Doctor --</option>{hcps.map(h => (<option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>))}</select></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label><input type="text" placeholder="Name" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-list-delivery" /><datalist id="educator-list-delivery">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist><div className="flex flex-wrap gap-1 mt-1">{educatorSuggestions.slice(0, 6).map(s => (<button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>))}</div></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div></div>
-                          <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => { setSelectedProduct(p.id); if(foundPatient) dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
+                          <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">
+                              {PRODUCTS.map(p => {
+                                  const styles = getProductButtonStyles(p.id, selectedProduct === p.id);
+                                  return (
+                                  <button key={p.id} onClick={() => { setSelectedProduct(p.id); if(foundPatient) dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }} className={`p-3 text-left border-2 transition-all ${styles}`}>
+                                      <div className="font-bold text-sm">{p.name}</div>
+                                      <div className="text-xs uppercase opacity-70">{p.type}</div>
+                                  </button>
+                                  );
+                              })}
+                          </div></div>
                           <button onClick={handleSubmitDelivery} disabled={isSubmitting} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all flex items-center justify-center gap-2 ${duplicateWarning ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>
                              {duplicateWarning ? 'Confirm Delivery (Review)' : 'Confirm Delivery'}
                           </button>
@@ -1190,7 +1220,20 @@ const App: React.FC = () => {
                     <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto rounded-lg">
                         <table className="w-full text-left min-w-[800px]">
                         <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                        <tbody className="divide-y divide-slate-100">{filterData(deliveries).map(d => (<tr key={d.id} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td><td className="px-6 py-4"><div className="font-bold text-slate-800">{d.patient?.full_name}</div><div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div></td><td className="px-6 py-4"><span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">{getProductName(d.product_id)}</span></td><td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}{d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}</td><td className="px-6 py-4 text-sm text-slate-600">{d.educator_name || '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
+                        <tbody className="divide-y divide-slate-100">{filterData(deliveries).map(d => (
+                            <tr key={d.id} className="hover:bg-slate-50 transition-colors">
+                                <td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td>
+                                <td className="px-6 py-4"><div className="font-bold text-slate-800">{d.patient?.full_name}</div><div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div></td>
+                                <td className="px-6 py-4">
+                                    <span className={`inline-block px-2 py-1 text-xs font-bold rounded border ${getProductStyles(d.product_id)}`}>
+                                        {getProductName(d.product_id)}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}{d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}</td>
+                                <td className="px-6 py-4 text-sm text-slate-600">{d.educator_name || '-'}</td>
+                                <td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td>
+                            </tr>
+                        ))}</tbody>
                         </table>
                         {filterData(deliveries).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
                     </div>
@@ -1213,7 +1256,8 @@ const App: React.FC = () => {
                                     const patientDeliveries = deliveries.filter(d => d.patient_id === p.id).sort((a,b) => new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime());
                                     const lastDelivery = patientDeliveries[0];
                                     // NEW: Assigned Product Logic
-                                    const latestProduct = lastDelivery ? getProductName(lastDelivery.product_id) : '-';
+                                    const latestProductId = lastDelivery ? lastDelivery.product_id : null;
+                                    const latestProductName = latestProductId ? getProductName(latestProductId) : '-';
 
                                     return (
                                         <tr key={p.id} className="hover:bg-slate-50 transition-colors">
@@ -1223,7 +1267,11 @@ const App: React.FC = () => {
                                                 <div className="text-xs font-mono text-slate-500">Ph: {p.phone_number}</div>
                                             </td>
                                             <td className="px-6 py-4">
-                                                {lastDelivery ? <span className="inline-block px-2 py-1 bg-purple-50 text-purple-700 text-xs font-bold rounded border border-purple-100">{latestProduct}</span> : <span className="text-slate-400">-</span>}
+                                                {latestProductId ? (
+                                                    <span className={`inline-block px-2 py-1 text-xs font-bold rounded border ${getProductStyles(latestProductId)}`}>
+                                                        {latestProductName}
+                                                    </span>
+                                                ) : <span className="text-slate-400">-</span>}
                                             </td>
                                             <td className="px-6 py-4 text-sm text-slate-600">
                                                 {lastDelivery ? formatDateFriendly(lastDelivery.delivery_date) : <span className="text-slate-400 italic">No history</span>}
