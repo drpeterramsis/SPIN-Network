@@ -48,8 +48,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.019",
-  version: "2.0.019"
+  name: "SPIN v2.0.021",
+  version: "2.0.021"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -742,6 +742,16 @@ const App: React.FC = () => {
           <Toast message={notification.msg} type={notification.type} onClose={() => setNotification(null)} />
       )}
 
+      {/* FULL SCREEN LOADING OVERLAY */}
+      {isSubmitting && (
+          <div className="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center">
+             <div className="bg-white p-6 rounded-xl shadow-2xl flex flex-col items-center animate-in zoom-in duration-200">
+                 <Loader2 className="w-10 h-10 text-[#FFC600] animate-spin mb-3" />
+                 <p className="font-bold text-slate-800 animate-pulse">Processing...</p>
+             </div>
+          </div>
+      )}
+
       {/* PWA INSTALL BANNER */}
       {installPrompt && (
           <div className="bg-black text-white p-3 flex justify-between items-center z-50 sticky top-0 shadow-lg">
@@ -855,7 +865,7 @@ const App: React.FC = () => {
                         </>
                     )}
                     <button type="submit" disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
-                        {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4" />} Save Changes
+                         <Save className="w-4 h-4" /> Save Changes
                     </button>
                 </form>
              </div>
@@ -883,7 +893,7 @@ const App: React.FC = () => {
                         <datalist id="hospital-suggestions">{hcpHospitals.map(h => <option key={h} value={h} />)}</datalist>
                     </div>
                     <button type="submit" disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
-                        {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Add to Directory'}
+                        Add to Directory
                     </button>
                 </form>
             </div>
@@ -914,7 +924,7 @@ const App: React.FC = () => {
                         <input type="date" className="w-full border p-2" value={newClinicForm.date} onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})} />
                     </div>
                     <button type="submit" disabled={isSubmitting} className="w-full bg-black hover:bg-slate-800 text-white font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
-                         {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Register Location'}
+                         Register Location
                     </button>
                 </form>
             </div>
@@ -950,8 +960,8 @@ const App: React.FC = () => {
         </div>
       </nav>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative">
-        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-full">
+      <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative flex flex-col">
+        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-full flex-grow">
           
           <div className="flex space-x-1 bg-white p-1 rounded-xl shadow-sm border border-slate-200 mb-8 w-full md:w-auto inline-flex overflow-x-auto">
             {[{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'deliver', label: 'Deliver Pen', icon: Syringe }, { id: 'custody', label: 'Custody', icon: Building2 }, { id: 'database', label: 'Database', icon: Database }].map(t => (
@@ -1017,7 +1027,7 @@ const App: React.FC = () => {
                                         <input type="number" min="1" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" placeholder="0" value={receiveForm.quantity} onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})} />
                                     </div>
                                     <button type="submit" disabled={isSubmitting} className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400 whitespace-nowrap disabled:opacity-50 flex items-center gap-2">
-                                        {isSubmitting && <Loader2 className="w-3 h-3 animate-spin"/>} Add to Stock
+                                        Add to Stock
                                     </button>
                                 </form>
                             </div>
@@ -1089,7 +1099,7 @@ const App: React.FC = () => {
                                         <div className="flex flex-col gap-2"><label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer"><input type="radio" name="sourceType" checked={transferForm.sourceType === 'rep'} onChange={() => setTransferForm({...transferForm, sourceType: 'rep', educatorName: ''})} /><span className="text-xs font-bold">My Inventory (Rep)</span><span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span></label></div>
                                     </div>
                                     <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700 flex items-center justify-center gap-2">
-                                        {isSubmitting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm Transfer'}
+                                        Confirm Transfer
                                     </button>
                                 </form>
                             </div>
@@ -1113,7 +1123,7 @@ const App: React.FC = () => {
                       {foundPatient ? (
                           <div className="bg-green-50 border border-green-200 p-4 mb-6 animate-in fade-in"><div className="flex items-start gap-3"><CheckCircle className="w-5 h-5 text-green-600 mt-0.5" /><div className="flex-1"><p className="font-bold text-green-800">Patient Found</p><p className="text-sm text-green-700">{foundPatient.full_name}</p><p className="text-xs text-green-600 font-mono">{foundPatient.national_id} | {foundPatient.phone_number}</p></div></div></div>
                       ) : hasSearched && (
-                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6 animate-in fade-in"><p className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[#FFC600]" /> Patient not found. Register new?</p><div className="space-y-3"><input type="text" placeholder="Full Name" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} /><input type="text" placeholder="Phone Number" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} /><button onClick={handleCreatePatient} disabled={isSubmitting} className="bg-black text-white px-4 py-2 text-xs font-bold uppercase flex items-center gap-2">{isSubmitting && <Loader2 className="w-3 h-3 animate-spin"/>} Save & Select Patient</button></div></div>
+                          <div className="bg-slate-50 border border-slate-200 p-4 mb-6 animate-in fade-in"><p className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[#FFC600]" /> Patient not found. Register new?</p><div className="space-y-3"><input type="text" placeholder="Full Name" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} /><input type="text" placeholder="Phone Number" className="w-full border border-slate-300 p-2 text-sm" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} /><button onClick={handleCreatePatient} disabled={isSubmitting} className="bg-black text-white px-4 py-2 text-xs font-bold uppercase flex items-center gap-2">Save & Select Patient</button></div></div>
                       )}
                       {foundPatient && (
                           <>
@@ -1139,7 +1149,6 @@ const App: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label><input type="text" placeholder="Name" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-list-delivery" /><datalist id="educator-list-delivery">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist><div className="flex flex-wrap gap-1 mt-1">{educatorSuggestions.slice(0, 6).map(s => (<button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>))}</div></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div></div>
                           <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => { setSelectedProduct(p.id); if(foundPatient) dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
                           <button onClick={handleSubmitDelivery} disabled={isSubmitting} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all flex items-center justify-center gap-2 ${duplicateWarning ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>
-                             {isSubmitting && <Loader2 className="w-4 h-4 animate-spin"/>}
                              {duplicateWarning ? 'Confirm Delivery (Review)' : 'Confirm Delivery'}
                           </button>
                       </div>
@@ -1311,6 +1320,18 @@ const App: React.FC = () => {
           )}
         </main>
       </div>
+
+      <footer className="bg-white border-t border-slate-200 py-0.5 shrink-0 z-40 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] relative">
+        <div className="max-w-7xl mx-auto px-4 flex justify-between items-center h-6">
+            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-2">
+                <Hexagon className="w-3 h-3 text-[#FFC600] fill-current" />
+                <span>SPIN v{METADATA.version}</span>
+            </div>
+            <div className="text-[10px] text-slate-400">
+                &copy; {new Date().getFullYear()} Supply Insulin Pen Network
+            </div>
+        </div>
+      </footer>
 
       <AIReportModal isOpen={showAIModal} onClose={() => setShowAIModal(false)} deliveries={deliveries} userEmail={user?.email || ''} />
     </div>
