@@ -224,9 +224,10 @@ export const dataService = {
   },
 
   // --- CUSTODY ---
+  // Using 'custodies' table for consistency with plural convention
   async getCustodies(): Promise<Custody[]> {
       if (isSupabaseConfigured() && supabase) {
-          const { data, error } = await supabase.from('custody').select('*').order('name');
+          const { data, error } = await supabase.from('custodies').select('*').order('name');
           if (error) throw error;
           return data;
       } else {
@@ -251,7 +252,7 @@ export const dataService = {
   async createCustody(custody: Omit<Custody, 'id'|'current_stock'>): Promise<Custody> {
       const newItem = { ...custody, current_stock: 0 };
       if (isSupabaseConfigured() && supabase) {
-          const { data, error } = await supabase.from('custody').insert([newItem]).select().single();
+          const { data, error } = await supabase.from('custodies').insert([newItem]).select().single();
           if (error) throw error;
           return data;
       } else {
@@ -266,9 +267,9 @@ export const dataService = {
   async updateCustody(id: string, updates: Partial<Custody>): Promise<void> {
       let oldCustody: Custody | null = null;
       if (isSupabaseConfigured() && supabase) {
-          const { data } = await supabase.from('custody').select('*').eq('id', id).single();
+          const { data } = await supabase.from('custodies').select('*').eq('id', id).single();
           oldCustody = data;
-          const { error } = await supabase.from('custody').update(updates).eq('id', id);
+          const { error } = await supabase.from('custodies').update(updates).eq('id', id);
           if (error) throw error;
       } else {
           const list = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || '[]');
@@ -291,7 +292,7 @@ export const dataService = {
           // Cascade delete transactions and deliveries related to this custody
           await supabase.from('stock_transactions').delete().eq('custody_id', id);
           await supabase.from('deliveries').delete().eq('custody_id', id);
-          await supabase.from('custody').delete().eq('id', id);
+          await supabase.from('custodies').delete().eq('id', id);
       } else {
           let list = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || '[]');
           list = list.filter((i: Custody) => i.id !== id);
@@ -312,7 +313,8 @@ export const dataService = {
       if (isSupabaseConfigured() && supabase) {
           const { data, error } = await supabase
               .from('deliveries')
-              .select('*, patient:patients(*), hcp:hcps(*), custody:custody(*)')
+              // Note: Using 'custodies' alias for the join to match the table name change
+              .select('*, patient:patients(*), hcp:hcps(*), custody:custodies(*)')
               .order('delivery_date', { ascending: false });
           if (error) throw error;
           return data;
