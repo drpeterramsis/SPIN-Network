@@ -42,8 +42,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.014",
-  version: "2.0.014"
+  name: "SPIN v2.0.015",
+  version: "2.0.015"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -349,18 +349,24 @@ const App: React.FC = () => {
       try {
         let targetRep = await dataService.getRepCustody();
         
-        // Auto-create if missing to avoid "My Inventory not found"
+        // Auto-create if missing with robust check
         if (!targetRep) {
-            targetRep = await dataService.createCustody({
-                name: 'My Rep Inventory',
-                type: 'rep',
-                created_at: new Date().toISOString()
-            });
-            setRepCustody(targetRep);
+            try {
+                targetRep = await dataService.createCustody({
+                    name: 'My Rep Inventory',
+                    type: 'rep',
+                    created_at: new Date().toISOString()
+                });
+                setRepCustody(targetRep);
+                // Also update the full list locally to reflect change immediately
+                setCustodies(prev => [...prev, targetRep!]);
+            } catch (createErr) {
+                // Fallback: try fetching again in case it was created concurrently
+                targetRep = await dataService.getRepCustody();
+            }
         }
 
-        if (!targetRep) throw new Error("My Inventory not found and could not be created.");
-        // setRepCustody(targetRep); 
+        if (!targetRep) throw new Error("My Inventory could not be found or initialized. Please refresh the page.");
 
         const { quantity, educatorName, date } = receiveForm;
         if (!quantity) {
@@ -397,14 +403,19 @@ const App: React.FC = () => {
         if (sourceType === 'rep') {
             let r = await dataService.getRepCustody();
             
-            // Auto-create if missing
+            // Robust Auto-create if missing
             if (!r) {
-                r = await dataService.createCustody({
-                    name: 'My Rep Inventory',
-                    type: 'rep',
-                    created_at: new Date().toISOString()
-                });
-                setRepCustody(r);
+                try {
+                    r = await dataService.createCustody({
+                        name: 'My Rep Inventory',
+                        type: 'rep',
+                        created_at: new Date().toISOString()
+                    });
+                    setRepCustody(r);
+                    setCustodies(prev => [...prev, r!]);
+                } catch (createErr) {
+                    r = await dataService.getRepCustody();
+                }
             }
 
             if (!r || !r.id) throw new Error("Rep custody not initialized.");
@@ -546,6 +557,15 @@ const App: React.FC = () => {
           };
           return stringify(item).toLowerCase().includes(lower);
       });
+  };
+
+  const getLastSupplyDate = (custodyId: string) => {
+      const supplies = stockTransactions
+        .filter(t => t.custody_id === custodyId && t.quantity > 0)
+        .sort((a,b) => new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime());
+      
+      if (supplies.length === 0) return 'Never';
+      return formatDateFriendly(supplies[0].transaction_date);
   };
 
   const LockedState = ({ title, description }: { title: string, description: string }) => (
@@ -812,7 +832,13 @@ const App: React.FC = () => {
                             <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto custom-scrollbar">
                                 {custodies.filter(c => c.type === 'clinic').map(clinic => (
                                     <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group flex justify-between items-center">
-                                        <div><h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4><p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p></div>
+                                        <div>
+                                            <h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4>
+                                            <div className="flex flex-col gap-1 mt-1">
+                                                <p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p>
+                                                <p className="text-xs text-slate-500 font-bold">Last Supplied: {getLastSupplyDate(clinic.id)}</p>
+                                            </div>
+                                        </div>
                                         <div className="flex items-center gap-6">
                                              <div className="text-right"><span className="block text-2xl font-black text-slate-900">{clinic.current_stock || 0}</span><span className="text-[10px] text-slate-400 uppercase font-bold">Pens</span></div>
                                             <button onClick={() => { setTransferForm(prev => ({...prev, toCustodyId: clinic.id, educatorName: ''})); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }} className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-2 text-xs font-bold uppercase rounded flex items-center gap-1">Supply <ArrowRight className="w-3 h-3" /></button>
