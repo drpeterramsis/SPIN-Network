@@ -30,7 +30,9 @@ import {
   Store,
   X,
   Undo2,
-  History
+  History,
+  Pencil,
+  Save
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -38,8 +40,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.009",
-  version: "2.0.009"
+  name: "SPIN v2.0.010",
+  version: "2.0.010"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -63,6 +65,10 @@ const App: React.FC = () => {
   const [showAIModal, setShowAIModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
+  // Edit State
+  const [editItem, setEditItem] = useState<any>(null);
+  const [editType, setEditType] = useState<DBView | null>(null);
+  
   // Delivery Form States
   const [step, setStep] = useState(1);
   const [nidSearch, setNidSearch] = useState('');
@@ -149,15 +155,13 @@ const App: React.FC = () => {
           console.error("Error loading Rep Custody", e);
       }
 
-      // Extract unique educators from BOTH deliveries and stock transactions for better suggestions
+      // Extract unique educators
       const educatorSet = new Set<string>();
       
-      // From Deliveries
       d.forEach(item => {
           if (item.educator_name) educatorSet.add(item.educator_name);
       });
       
-      // From Stock In transactions
       s.forEach(tx => {
           if (tx.source && tx.source.startsWith('Educator: ')) {
               educatorSet.add(tx.source.replace('Educator: ', '').trim());
@@ -174,35 +178,21 @@ const App: React.FC = () => {
   useEffect(() => {
     if (user) {
         loadData();
-
-        // Fetch Profile & Validate Access on App Start/Login
         const fetchProfile = async () => {
             if (isSupabaseConfigured() && supabase) {
-                const { data, error } = await supabase
-                    .from('profiles')
-                    .select('*')
-                    .eq('id', user.id)
-                    .single();
-                
-                if (data) {
-                    // Security Check: Re-validate access on app load
-                    if (data.access !== 'yes') {
-                        console.warn("Access revoked. Logging out.");
-                        await supabase.auth.signOut();
-                        setUser(null);
-                        setUserProfile(null);
-                    } else {
-                        setUserProfile(data);
-                    }
+                const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+                if (data && data.access === 'yes') {
+                    setUserProfile(data);
+                } else if (data) {
+                     await supabase.auth.signOut();
+                     setUser(null);
                 }
             } else {
-                // Demo Mode
                 setUserProfile({ full_name: 'Demo User', access: 'yes' });
             }
         };
         fetchProfile();
     } else {
-        // Clear sensitive data on logout
         setDeliveries([]);
         setHcps([]);
         setCustodies([]);
@@ -228,7 +218,6 @@ const App: React.FC = () => {
     const p = await dataService.searchPatient(nidSearch);
     setFoundPatient(p);
     if (p) {
-      // Check for duplicates immediately (Any previous delivery)
       const isDup = await dataService.checkDuplicateDelivery(p.id, selectedProduct);
       setDuplicateWarning(isDup);
     } else {
@@ -267,7 +256,7 @@ const App: React.FC = () => {
     try {
         const created = await dataService.createHCP(newHCP);
         setHcps([...hcps, created]);
-        setSelectedHCP(created.id); // Auto select
+        setSelectedHCP(created.id); 
         setShowHCPModal(false);
         setNewHCP({ full_name: '', specialty: '', hospital: '' });
         alert("Doctor registered successfully!");
@@ -278,7 +267,6 @@ const App: React.FC = () => {
   };
 
   const handleSubmitDelivery = async () => {
-    // Explicit validation
     if (!foundPatient) { alert("No patient selected"); return; }
     if (!selectedHCP) { alert("Please select a Prescribing Doctor"); return; }
     if (!selectedProduct) { alert("Please select a Product"); return; }
@@ -286,6 +274,7 @@ const App: React.FC = () => {
     if (!educatorName) { alert("Please enter the Reported Educator Name"); return; }
     
     try {
+      // Note: we pass custody_id to helper, which handles logic, even if DB schema might exclude it for 'deliveries' table inserts
       await dataService.logDelivery({
         patient_id: foundPatient.id,
         hcp_id: selectedHCP,
@@ -296,10 +285,9 @@ const App: React.FC = () => {
         rx_date: rxDate,
         educator_name: educatorName,
         educator_submission_date: educatorDate,
-        custody_id: selectedCustody
+        custody_id: selectedCustody 
       });
       
-      // Reset
       alert("Delivery Logged Successfully");
       setStep(1);
       setNidSearch('');
@@ -321,13 +309,9 @@ const App: React.FC = () => {
   const handleReceiveStock = async (e: React.FormEvent) => {
       e.preventDefault();
       try {
-        // Force refresh rep custody before adding
+        // Force refresh rep custody
         let targetRep = await dataService.getRepCustody();
-        
-        if (!targetRep) {
-            alert("Could not initialize My Inventory. Please check connection.");
-            return;
-        }
+        if (!targetRep) throw new Error("My Inventory not found");
         setRepCustody(targetRep);
 
         const { quantity, educatorName } = receiveForm;
@@ -344,7 +328,7 @@ const App: React.FC = () => {
         );
         alert("Stock received successfully into My Inventory.");
         setReceiveForm({ quantity: 0, educatorName: '' });
-        await loadData(); // Reload to update totals
+        await loadData(); 
       } catch (err: any) {
           alert("Error: " + err.message);
       }
@@ -363,21 +347,20 @@ const App: React.FC = () => {
         let sourceLabel = `Educator: ${educatorName || 'Unknown'}`;
 
         if (sourceType === 'rep') {
-            if (!repCustody) {
-                 const r = await dataService.getRepCustody();
-                 setRepCustody(r);
-                 if(!r) throw new Error("Rep custody not found");
-            }
-            fromCustodyId = repCustody?.id;
+            // Refresh rep custody to ensure we have the ID
+            const r = await dataService.getRepCustody();
+            setRepCustody(r);
+            if (!r || !r.id) throw new Error("Rep custody not initialized. Please refresh page.");
+            fromCustodyId = r.id;
             sourceLabel = 'Medical Rep Transfer';
         }
 
         await dataService.processStockTransaction(toCustodyId, Number(quantity), date, sourceLabel, fromCustodyId);
-        alert("Stock updated successfully");
+        alert("Stock transferred successfully");
         setTransferForm({ ...transferForm, quantity: 0, educatorName: '' });
         await loadData();
     } catch (err: any) {
-        alert("Error: " + err.message);
+        alert("Transfer Failed: " + err.message);
     }
   };
 
@@ -393,9 +376,7 @@ const App: React.FC = () => {
         alert("Clinic Custody Registered");
         setNewClinicForm({ ...newClinicForm, name: '' });
         setShowClinicModal(false);
-        
-        // Update list and select the new one
-        await loadData(); // Refresh full list
+        await loadData();
         
         if(activeTab === 'deliver') {
             setSelectedCustody(created.id);
@@ -405,6 +386,49 @@ const App: React.FC = () => {
     } catch (err: any) {
         alert("Failed to add clinic: " + err.message);
     }
+  };
+
+  // --- EDIT FUNCTIONALITY ---
+  const openEditModal = (type: DBView, item: any) => {
+      setEditType(type);
+      setEditItem(item);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      try {
+          if (editType === 'deliveries') {
+              await dataService.updateDelivery(editItem.id, {
+                  delivery_date: editItem.delivery_date,
+                  rx_date: editItem.rx_date,
+                  educator_name: editItem.educator_name,
+                  notes: editItem.notes
+              });
+          } else if (editType === 'hcps') {
+              await dataService.updateHCP(editItem.id, {
+                  full_name: editItem.full_name,
+                  specialty: editItem.specialty,
+                  hospital: editItem.hospital
+              });
+          } else if (editType === 'locations') {
+              await dataService.updateCustody(editItem.id, {
+                  name: editItem.name,
+                  current_stock: Number(editItem.current_stock) // Allow stock correction
+              });
+          } else if (editType === 'stock') {
+              await dataService.updateStockTransaction(editItem.id, {
+                  transaction_date: editItem.transaction_date,
+                  source: editItem.source,
+                  quantity: Number(editItem.quantity) // Smart update logic in service
+              });
+          }
+          alert("Record updated successfully.");
+          setEditItem(null);
+          setEditType(null);
+          loadData();
+      } catch (err: any) {
+          alert("Update failed: " + err.message);
+      }
   };
 
   // Component for Locked State
@@ -447,6 +471,93 @@ const App: React.FC = () => {
             setShowProfileModal(false);
           }}
         />
+      )}
+
+      {/* GENERIC EDIT MODAL */}
+      {editItem && editType && (
+         <div 
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
+            onClick={() => { setEditItem(null); setEditType(null); }}
+         >
+             <div 
+                className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+             >
+                 <div className="bg-black p-4 flex items-center justify-between">
+                     <div className="flex items-center gap-3">
+                        <Pencil className="w-5 h-5 text-[#FFC600]" />
+                        <h3 className="text-white font-bold">Edit Record</h3>
+                     </div>
+                     <button onClick={() => { setEditItem(null); setEditType(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+                </div>
+                <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
+                    {editType === 'deliveries' && (
+                        <>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Delivery Date</label>
+                                <input type="date" className="w-full border p-2" value={editItem.delivery_date} onChange={e => setEditItem({...editItem, delivery_date: e.target.value})} />
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Name</label>
+                                <input type="text" className="w-full border p-2" value={editItem.educator_name} onChange={e => setEditItem({...editItem, educator_name: e.target.value})} />
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rx Date</label>
+                                <input type="date" className="w-full border p-2" value={editItem.rx_date || ''} onChange={e => setEditItem({...editItem, rx_date: e.target.value})} />
+                             </div>
+                        </>
+                    )}
+
+                    {editType === 'hcps' && (
+                        <>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label>
+                                <input type="text" className="w-full border p-2" value={editItem.full_name} onChange={e => setEditItem({...editItem, full_name: e.target.value})} />
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital</label>
+                                <input type="text" className="w-full border p-2" value={editItem.hospital} onChange={e => setEditItem({...editItem, hospital: e.target.value})} />
+                             </div>
+                        </>
+                    )}
+
+                    {editType === 'locations' && (
+                        <>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Location Name</label>
+                                <input type="text" className="w-full border p-2" value={editItem.name} onChange={e => setEditItem({...editItem, name: e.target.value})} />
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Current Stock (Correction)</label>
+                                <input type="number" className="w-full border p-2 font-bold text-red-600" value={editItem.current_stock} onChange={e => setEditItem({...editItem, current_stock: e.target.value})} />
+                                <p className="text-[10px] text-red-500 mt-1">Warning: Manually changing this overrides transaction history.</p>
+                             </div>
+                        </>
+                    )}
+
+                    {editType === 'stock' && (
+                        <>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label>
+                                <input type="date" className="w-full border p-2" value={editItem.transaction_date} onChange={e => setEditItem({...editItem, transaction_date: e.target.value})} />
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label>
+                                <input type="number" className="w-full border p-2" value={editItem.quantity} onChange={e => setEditItem({...editItem, quantity: e.target.value})} />
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source / Notes</label>
+                                <input type="text" className="w-full border p-2" value={editItem.source} onChange={e => setEditItem({...editItem, source: e.target.value})} />
+                             </div>
+                        </>
+                    )}
+
+                    <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
+                        <Save className="w-4 h-4" /> Save Changes
+                    </button>
+                </form>
+             </div>
+         </div>
       )}
 
       {/* NEW HCP MODAL */}
@@ -655,7 +766,6 @@ const App: React.FC = () => {
                               The <strong>Supply Insulin Pen Network</strong> is an advanced tracking and verification system designed to ensure the secure, efficient, and traceable distribution of insulin pens to patients.
                           </p>
                       </div>
-                      {/* ... public cards ... */}
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                           <div className="bg-white p-6 shadow-sm border-t-4 border-slate-900">
                               <ShieldCheck className="w-12 h-12 text-[#FFC600] mb-4" />
@@ -806,9 +916,14 @@ const App: React.FC = () => {
                                         .filter(t => t.custody_id === repCustody?.id && t.quantity > 0)
                                         .slice(0, 5)
                                         .map(t => (
-                                            <div key={t.id} className="text-[10px] text-slate-300 flex justify-between">
+                                            <div key={t.id} className="text-[10px] text-slate-300 flex justify-between items-center group">
                                                 <span>{formatDateFriendly(t.transaction_date)}</span>
-                                                <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
+                                                    <button onClick={() => openEditModal('stock', t)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-white transition-opacity">
+                                                        <Pencil className="w-3 h-3" />
+                                                    </button>
+                                                </div>
                                             </div>
                                     ))}
                                     {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).length === 0 && (
@@ -944,7 +1059,6 @@ const App: React.FC = () => {
             ) : (
               <div className="bg-white shadow-lg border-t-4 border-[#FFC600] max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-500 relative">
                   
-                  {/* Cancel Button */}
                   <button 
                     onClick={handleCancelDelivery}
                     className="absolute top-4 right-4 text-slate-400 hover:text-red-500 z-10 bg-slate-800/50 hover:bg-red-50 p-2 rounded-full transition-colors border border-transparent hover:border-red-200"
@@ -1217,7 +1331,7 @@ const App: React.FC = () => {
                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product Assigned</th>
                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th>
                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th>
-                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source</th>
+                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -1242,7 +1356,9 @@ const App: React.FC = () => {
                                 <td className="px-6 py-4 text-sm text-slate-600">
                                     {d.educator_name || '-'}
                                 </td>
-                                <td className="px-6 py-4 text-sm text-slate-600">{d.custody?.name || '-'}</td>
+                                <td className="px-6 py-4">
+                                    <button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                </td>
                             </tr>
                             ))}
                         </tbody>
@@ -1263,6 +1379,7 @@ const App: React.FC = () => {
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th>
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th>
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -1271,6 +1388,9 @@ const App: React.FC = () => {
                                                 <td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td>
                                                 <td className="px-6 py-4 text-slate-600">{h.specialty || '-'}</td>
                                                 <td className="px-6 py-4 text-slate-600">{h.hospital}</td>
+                                                <td className="px-6 py-4">
+                                                    <button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -1292,6 +1412,7 @@ const App: React.FC = () => {
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th>
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Stock Level</th>
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered Date</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -1301,6 +1422,9 @@ const App: React.FC = () => {
                                                 <td className="px-6 py-4 uppercase text-xs font-bold text-slate-500">{c.type}</td>
                                                 <td className="px-6 py-4 font-mono">{c.current_stock}</td>
                                                 <td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td>
+                                                <td className="px-6 py-4">
+                                                    <button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -1319,6 +1443,7 @@ const App: React.FC = () => {
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Custody</th>
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Change</th>
                                             <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Reason</th>
+                                            <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-10">Edit</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -1332,6 +1457,9 @@ const App: React.FC = () => {
                                                         {s.quantity > 0 ? '+' : ''}{s.quantity}
                                                     </td>
                                                     <td className="px-6 py-4 text-slate-600 text-sm">{s.source}</td>
+                                                    <td className="px-6 py-4">
+                                                        <button onClick={() => openEditModal('stock', s)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                                    </td>
                                                 </tr>
                                             );
                                         })}

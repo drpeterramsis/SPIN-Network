@@ -85,6 +85,20 @@ export const dataService = {
     }
   },
 
+  async updateHCP(id: string, updates: Partial<HCP>): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      const { error } = await supabase.from('hcps').update(updates).eq('id', id);
+      if (error) throw error;
+    } else {
+      const list: HCP[] = JSON.parse(localStorage.getItem(KEYS.HCPS) || '[]');
+      const idx = list.findIndex(i => i.id === id);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...updates };
+        localStorage.setItem(KEYS.HCPS, JSON.stringify(list));
+      }
+    }
+  },
+
   // --- CUSTODY & STOCK ---
   async getCustodies(): Promise<Custody[]> {
     if (isSupabaseConfigured() && supabase) {
@@ -122,7 +136,6 @@ export const dataService = {
                   // Fallback for Demo
                   rep = { id: 'temp-rep', name: 'My Inventory (Temp)', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
               } else {
-                  // If creation fails (e.g. permission), return a dummy so UI doesn't crash, but log error
                   console.error("Could not initialize Rep Inventory in Database.");
                   return { id: 'error-rep', name: 'Error: Inventory Not Found', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
               }
@@ -147,9 +160,21 @@ export const dataService = {
       }
   },
 
+  async updateCustody(id: string, updates: Partial<Custody>): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      const { error } = await supabase.from('custodies').update(updates).eq('id', id);
+      if (error) throw error;
+    } else {
+      const list: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || '[]');
+      const idx = list.findIndex(i => i.id === id);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...updates };
+        localStorage.setItem(KEYS.CUSTODY, JSON.stringify(list));
+      }
+    }
+  },
+
   // Unified Stock Transaction Manager (Generic Pens)
-  // If 'fromCustodyId' is provided, it deducts from there (Transfer)
-  // 'toCustodyId' always receives stock
   async processStockTransaction(
     toCustodyId: string, 
     quantity: number, 
@@ -158,44 +183,61 @@ export const dataService = {
     fromCustodyId?: string
   ): Promise<void> {
      if (isSupabaseConfigured() && supabase) {
-         // 1. Log Transaction (Inbound)
-         const { error: errIn } = await supabase.from('stock_transactions').insert([{
-             custody_id: toCustodyId,
-             quantity: quantity,
-             transaction_date: date,
-             source: fromCustodyId ? `Transfer from ${fromCustodyId}` : sourceLabel
-         }]);
-         if (errIn) throw errIn;
+         // 1. Handle Sender (Outbound) - DEDUCT FIRST
+         if (fromCustodyId) {
+            // Fetch sender first to check existence and stock
+            const { data: fromCustody } = await supabase.from('custodies').select('current_stock, name').eq('id', fromCustodyId).single();
+            
+            if (fromCustody) {
+                // Check if enough stock
+                if ((fromCustody.current_stock || 0) < quantity) {
+                    console.warn(`Warning: Transferring more than available stock. Available: ${fromCustody.current_stock}, Required: ${quantity}`);
+                    // We allow it but warn, or we could throw: throw new Error("Insufficient stock in source inventory.");
+                }
 
-         // 2. Update Stock for Receiver
+                // Update Stock for Sender
+                const newStock = Math.max(0, (fromCustody.current_stock || 0) - quantity);
+                const { error: updateErr } = await supabase.from('custodies').update({ current_stock: newStock }).eq('id', fromCustodyId);
+                if (updateErr) throw updateErr;
+
+                // Log Transaction (Outbound)
+                const { data: destCustody } = await supabase.from('custodies').select('name').eq('id', toCustodyId).single();
+                const destName = destCustody?.name || 'Clinic';
+
+                const { error: errOut } = await supabase.from('stock_transactions').insert([{
+                    custody_id: fromCustodyId,
+                    quantity: -quantity,
+                    transaction_date: date,
+                    source: `Transfer to ${destName}`
+                }]);
+                if (errOut) console.error("Failed to log outbound transaction", errOut);
+            } else {
+                throw new Error("Source inventory (sender) not found.");
+            }
+         }
+
+         // 2. Handle Receiver (Inbound) - ADD SECOND
          // Note: This is not atomic without RPC, but acceptable for this scope
          const { data: toCustody } = await supabase.from('custodies').select('current_stock').eq('id', toCustodyId).single();
          if (toCustody) {
             const newStock = (toCustody.current_stock || 0) + quantity;
-            await supabase.from('custodies').update({ current_stock: newStock }).eq('id', toCustodyId);
-         }
+            const { error: updateErr } = await supabase.from('custodies').update({ current_stock: newStock }).eq('id', toCustodyId);
+            if (updateErr) throw updateErr;
 
-         // 3. Handle Sender (Outbound)
-         if (fromCustodyId) {
-            // Log Transaction (Outbound)
-            const { error: errOut } = await supabase.from('stock_transactions').insert([{
-                custody_id: fromCustodyId,
-                quantity: -quantity,
+            // Log Transaction (Inbound)
+            const { error: errIn } = await supabase.from('stock_transactions').insert([{
+                custody_id: toCustodyId,
+                quantity: quantity,
                 transaction_date: date,
-                source: `Transfer to ${toCustodyId}`
+                source: fromCustodyId ? `Transfer from ${fromCustodyId}` : sourceLabel
             }]);
-            if (errOut) throw errOut;
-
-            // Update Stock for Sender
-            const { data: fromCustody } = await supabase.from('custodies').select('current_stock').eq('id', fromCustodyId).single();
-            if (fromCustody) {
-                const newStock = Math.max(0, (fromCustody.current_stock || 0) - quantity);
-                await supabase.from('custodies').update({ current_stock: newStock }).eq('id', fromCustodyId);
-            }
+            if (errIn) throw errIn;
+         } else {
+             throw new Error("Destination location not found.");
          }
 
      } else {
-         // 1. Load Data
+         // LOCAL STORAGE MODE
          const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || JSON.stringify(MOCK_CUSTODY));
          const transList: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
 
@@ -209,12 +251,13 @@ export const dataService = {
                  fromCustody.current_stock -= quantity;
                  
                  // Log Outbound
+                 const toName = custodies.find(c => c.id === toCustodyId)?.name || 'Clinic';
                  transList.push({
                     id: uuidv4(),
                     custody_id: fromCustodyId,
                     quantity: -quantity,
                     transaction_date: date,
-                    source: `Transfer to ${toCustodyId}`
+                    source: `Transfer to ${toName}`
                  });
              }
          }
@@ -238,6 +281,49 @@ export const dataService = {
          localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
          localStorage.setItem(KEYS.STOCK, JSON.stringify(transList));
      }
+  },
+
+  async updateStockTransaction(id: string, updates: Partial<StockTransaction>): Promise<void> {
+      if (isSupabaseConfigured() && supabase) {
+          // If quantity changes, we must adjust the custody stock
+          if (updates.quantity !== undefined) {
+              // 1. Get old transaction
+              const { data: oldTx } = await supabase.from('stock_transactions').select('*').eq('id', id).single();
+              if (oldTx) {
+                  const diff = updates.quantity - oldTx.quantity;
+                  if (diff !== 0) {
+                       // Adjust custody stock
+                       const { data: custody } = await supabase.from('custodies').select('current_stock').eq('id', oldTx.custody_id).single();
+                       if (custody) {
+                           const newStock = (custody.current_stock || 0) + diff;
+                           await supabase.from('custodies').update({ current_stock: newStock }).eq('id', oldTx.custody_id);
+                       }
+                  }
+              }
+          }
+          
+          const { error } = await supabase.from('stock_transactions').update(updates).eq('id', id);
+          if (error) throw error;
+      } else {
+          const list: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+          const idx = list.findIndex(i => i.id === id);
+          if (idx >= 0) {
+              const oldQty = list[idx].quantity;
+              list[idx] = { ...list[idx], ...updates };
+              
+              // Adjust local stock if quantity changed
+              if (updates.quantity !== undefined && updates.quantity !== oldQty) {
+                  const diff = updates.quantity - oldQty;
+                  const custodies: Custody[] = JSON.parse(localStorage.getItem(KEYS.CUSTODY) || '[]');
+                  const c = custodies.find(c => c.id === list[idx].custody_id);
+                  if (c) {
+                      c.current_stock = (c.current_stock || 0) + diff;
+                      localStorage.setItem(KEYS.CUSTODY, JSON.stringify(custodies));
+                  }
+              }
+              localStorage.setItem(KEYS.STOCK, JSON.stringify(list));
+          }
+      }
   },
 
   async getStockTransactions(): Promise<StockTransaction[]> {
@@ -300,10 +386,28 @@ export const dataService = {
 
   async logDelivery(delivery: Omit<Delivery, 'id'>): Promise<Delivery> {
     if (isSupabaseConfigured() && supabase) {
-      const { data, error } = await supabase.from('deliveries').insert([delivery]).select().single();
+      // STRICT PAYLOAD CONSTRUCTION
+      // We construct a new object to ensure only valid columns are sent to Supabase.
+      // This prevents "Could not find column 'custody_id'" errors if the DB schema is outdated,
+      // or if 'patient', 'hcp' objects were accidentally included in the passed object.
+      const payload = {
+          patient_id: delivery.patient_id,
+          hcp_id: delivery.hcp_id,
+          product_id: delivery.product_id,
+          quantity: delivery.quantity,
+          delivered_by: delivery.delivered_by,
+          delivery_date: delivery.delivery_date,
+          rx_date: delivery.rx_date,
+          educator_name: delivery.educator_name,
+          educator_submission_date: delivery.educator_submission_date,
+          notes: delivery.notes
+      };
+      
+      const { data, error } = await supabase.from('deliveries').insert([payload]).select().single();
       if (error) throw error;
       
-      // Deduct from source custody in Supabase
+      // Deduct from source custody logic stays separate
+      // We use the custody_id from the argument, not the payload
       if (delivery.custody_id) {
           const { data: custody } = await supabase.from('custodies').select('current_stock').eq('id', delivery.custody_id).single();
           if (custody) {
@@ -315,7 +419,7 @@ export const dataService = {
                   custody_id: delivery.custody_id,
                   quantity: -delivery.quantity,
                   transaction_date: delivery.delivery_date,
-                  source: `Delivery to Patient: ${delivery.patient_id}`
+                  source: `Delivery to Patient: ${delivery.patient?.national_id || 'ID: ' + delivery.patient_id}`
               }]);
           }
       }
@@ -338,6 +442,20 @@ export const dataService = {
       
       await new Promise(r => setTimeout(r, 500));
       return newDelivery;
+    }
+  },
+
+  async updateDelivery(id: string, updates: Partial<Delivery>): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+       const { error } = await supabase.from('deliveries').update(updates).eq('id', id);
+       if (error) throw error;
+    } else {
+        const list: Delivery[] = JSON.parse(localStorage.getItem(KEYS.DELIVERIES) || '[]');
+        const idx = list.findIndex(i => i.id === id);
+        if (idx >= 0) {
+            list[idx] = { ...list[idx], ...updates };
+            localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(list));
+        }
     }
   }
 };
