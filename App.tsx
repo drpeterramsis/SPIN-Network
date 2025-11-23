@@ -38,8 +38,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.008",
-  version: "2.0.008"
+  name: "SPIN v2.0.009",
+  version: "2.0.009"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -121,27 +121,53 @@ const App: React.FC = () => {
 
   // Load Data & Profile
   const loadData = useCallback(async () => {
-    if (!user) return; // Don't fetch data if not logged in
+    if (!user) return; 
+    
+    // Safe fetch wrapper to prevent one failure from blocking all data
+    const safeFetch = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+        try { return await fn(); } catch (e) { console.error("Fetch error:", e); return fallback; }
+    };
+
     try {
-      const [d, h, c, repC, s] = await Promise.all([
-        dataService.getDeliveries(),
-        dataService.getHCPs(),
-        dataService.getCustodies(),
-        dataService.getRepCustody(),
-        dataService.getStockTransactions()
+      const [d, h, c, s] = await Promise.all([
+        safeFetch(() => dataService.getDeliveries(), []),
+        safeFetch(() => dataService.getHCPs(), []),
+        safeFetch(() => dataService.getCustodies(), []),
+        safeFetch(() => dataService.getStockTransactions(), [])
       ]);
+      
       setDeliveries(d);
       setHcps(h);
       setCustodies(c);
-      setRepCustody(repC);
       setStockTransactions(s);
       
-      // Extract unique educators for suggestions
-      const educators = Array.from(new Set(d.map(item => item.educator_name).filter(Boolean))) as string[];
-      setEducatorSuggestions(educators);
+      // Load Rep Custody independently
+      try {
+          const repC = await dataService.getRepCustody();
+          setRepCustody(repC);
+      } catch (e) {
+          console.error("Error loading Rep Custody", e);
+      }
+
+      // Extract unique educators from BOTH deliveries and stock transactions for better suggestions
+      const educatorSet = new Set<string>();
+      
+      // From Deliveries
+      d.forEach(item => {
+          if (item.educator_name) educatorSet.add(item.educator_name);
+      });
+      
+      // From Stock In transactions
+      s.forEach(tx => {
+          if (tx.source && tx.source.startsWith('Educator: ')) {
+              educatorSet.add(tx.source.replace('Educator: ', '').trim());
+          }
+      });
+      
+      setEducatorSuggestions(Array.from(educatorSet).sort());
 
     } catch (error) {
-      console.error("Load error", error);
+      console.error("Critical Load error", error);
     }
   }, [user]);
 
@@ -286,8 +312,8 @@ const App: React.FC = () => {
       loadData();
       setActiveTab('database');
       setDbView('deliveries');
-    } catch (e) {
-      alert("Failed to log delivery: " + e);
+    } catch (e: any) {
+      alert("Failed to log delivery: " + (e.message || JSON.stringify(e)));
     }
   };
 
@@ -318,7 +344,7 @@ const App: React.FC = () => {
         );
         alert("Stock received successfully into My Inventory.");
         setReceiveForm({ quantity: 0, educatorName: '' });
-        loadData();
+        await loadData(); // Reload to update totals
       } catch (err: any) {
           alert("Error: " + err.message);
       }
@@ -349,7 +375,7 @@ const App: React.FC = () => {
         await dataService.processStockTransaction(toCustodyId, Number(quantity), date, sourceLabel, fromCustodyId);
         alert("Stock updated successfully");
         setTransferForm({ ...transferForm, quantity: 0, educatorName: '' });
-        loadData();
+        await loadData();
     } catch (err: any) {
         alert("Error: " + err.message);
     }
@@ -369,8 +395,8 @@ const App: React.FC = () => {
         setShowClinicModal(false);
         
         // Update list and select the new one
-        const updatedCustodies = await dataService.getCustodies();
-        setCustodies(updatedCustodies);
+        await loadData(); // Refresh full list
+        
         if(activeTab === 'deliver') {
             setSelectedCustody(created.id);
         } else {
@@ -731,45 +757,65 @@ const App: React.FC = () => {
                             </div>
                         </div>
                         
-                        <div className="p-6 bg-slate-900 text-white flex flex-col md:flex-row gap-4 items-center">
+                        <div className="p-6 bg-slate-900 text-white flex flex-col md:flex-row gap-4 items-start">
                             <div className="flex-1">
                                 <h3 className="font-bold text-white flex items-center gap-2"><Package className="w-4 h-4 text-[#FFC600]" /> Receive Pens</h3>
-                                <p className="text-xs text-slate-400">Add stock received from Patient Educator.</p>
+                                <p className="text-xs text-slate-400 mb-3">Add stock received from Patient Educator.</p>
+                                
+                                <form 
+                                    onSubmit={handleReceiveStock} 
+                                    className="flex flex-wrap gap-3 items-end w-full"
+                                >
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source Educator</label>
+                                        <input 
+                                            type="text" 
+                                            required
+                                            placeholder="Educator Name"
+                                            className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40"
+                                            value={receiveForm.educatorName}
+                                            onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
+                                            list="educator-suggestions"
+                                        />
+                                        <datalist id="educator-suggestions">
+                                            {educatorSuggestions.map((name, i) => <option key={i} value={name} />)}
+                                        </datalist>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
+                                        <input 
+                                            type="number" 
+                                            min="1"
+                                            className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20"
+                                            placeholder="0"
+                                            value={receiveForm.quantity}
+                                            onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
+                                        />
+                                    </div>
+                                    <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">
+                                        Add to Stock
+                                    </button>
+                                </form>
                             </div>
-                            <form 
-                                onSubmit={handleReceiveStock} 
-                                className="flex flex-wrap gap-3 items-end w-full md:w-auto"
-                            >
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source Educator</label>
-                                    <input 
-                                        type="text" 
-                                        required
-                                        placeholder="Educator Name"
-                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40"
-                                        value={receiveForm.educatorName}
-                                        onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
-                                        list="educator-suggestions"
-                                    />
-                                    <datalist id="educator-suggestions">
-                                        {educatorSuggestions.map((name, i) => <option key={i} value={name} />)}
-                                    </datalist>
+
+                            {/* Recent Inbound History */}
+                            <div className="w-full md:w-64 border-l border-slate-700 pl-4">
+                                <h4 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2"><History className="w-3 h-3" /> Recent Additions</h4>
+                                <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
+                                    {stockTransactions
+                                        .filter(t => t.custody_id === repCustody?.id && t.quantity > 0)
+                                        .slice(0, 5)
+                                        .map(t => (
+                                            <div key={t.id} className="text-[10px] text-slate-300 flex justify-between">
+                                                <span>{formatDateFriendly(t.transaction_date)}</span>
+                                                <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
+                                            </div>
+                                    ))}
+                                    {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).length === 0 && (
+                                        <p className="text-[10px] text-slate-500 italic">No recent additions.</p>
+                                    )}
                                 </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
-                                    <input 
-                                        type="number" 
-                                        min="1"
-                                        className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20"
-                                        placeholder="0"
-                                        value={receiveForm.quantity}
-                                        onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
-                                    />
-                                </div>
-                                <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">
-                                    Add to Stock
-                                </button>
-                            </form>
+                            </div>
                         </div>
                     </div>
 

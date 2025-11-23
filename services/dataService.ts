@@ -122,7 +122,9 @@ export const dataService = {
                   // Fallback for Demo
                   rep = { id: 'temp-rep', name: 'My Inventory (Temp)', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
               } else {
-                  throw new Error("Could not initialize Rep Inventory in Database. Please check table 'custodies' exists.");
+                  // If creation fails (e.g. permission), return a dummy so UI doesn't crash, but log error
+                  console.error("Could not initialize Rep Inventory in Database.");
+                  return { id: 'error-rep', name: 'Error: Inventory Not Found', type: 'rep', created_at: new Date().toISOString(), current_stock: 0 };
               }
           }
       }
@@ -131,7 +133,9 @@ export const dataService = {
 
   async createCustody(custody: Omit<Custody, 'id' | 'current_stock'>): Promise<Custody> {
       if (isSupabaseConfigured() && supabase) {
-          const { data, error } = await supabase.from('custodies').insert([custody]).select().single();
+          // Explicitly add current_stock: 0 to ensure DB constraints are met
+          const payload = { ...custody, current_stock: 0 };
+          const { data, error } = await supabase.from('custodies').insert([payload]).select().single();
           if (error) throw error;
           return data;
       } else {
