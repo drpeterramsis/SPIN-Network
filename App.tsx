@@ -45,12 +45,12 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.017",
-  version: "2.0.017"
+  name: "SPIN v2.0.018",
+  version: "2.0.018"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
-type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock';
+type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock' | 'patients';
 
 // --- TOAST NOTIFICATION COMPONENT ---
 const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
@@ -92,6 +92,10 @@ const App: React.FC = () => {
   const [repCustody, setRepCustody] = useState<Custody | null>(null);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+
+  // Computed Suggestions
+  const [hcpSpecialties, setHcpSpecialties] = useState<string[]>([]);
+  const [hcpHospitals, setHcpHospitals] = useState<string[]>([]);
 
   // Edit State
   const [editItem, setEditItem] = useState<any>(null);
@@ -209,6 +213,7 @@ const App: React.FC = () => {
           console.error("Error loading Rep Custody", e);
       }
 
+      // Compute Suggestions
       const educatorSet = new Set<string>();
       d.forEach(item => { if (item.educator_name) educatorSet.add(item.educator_name); });
       s.forEach(tx => {
@@ -217,6 +222,12 @@ const App: React.FC = () => {
           }
       });
       setEducatorSuggestions(Array.from(educatorSet).sort());
+
+      const specSet = new Set<string>(h.map(i => i.specialty).filter(Boolean) as string[]);
+      setHcpSpecialties(Array.from(specSet).sort());
+      
+      const hospSet = new Set<string>(h.map(i => i.hospital).filter(Boolean) as string[]);
+      setHcpHospitals(Array.from(hospSet).sort());
 
     } catch (error) {
       console.error("Critical Load error", error);
@@ -344,6 +355,7 @@ const App: React.FC = () => {
         setSelectedHCP(created.id); 
         setShowHCPModal(false);
         setNewHCP({ full_name: '', specialty: '', hospital: '' });
+        loadData(); // To refresh suggestions list
         showToast("Doctor registered successfully!", "success");
     } catch (error) {
         showToast("Failed to register doctor.", "error");
@@ -512,6 +524,7 @@ const App: React.FC = () => {
           if (type === 'hcps') await dataService.deleteHCP(id);
           if (type === 'locations') await dataService.deleteCustody(id);
           if (type === 'stock' || type === 'tx') await dataService.deleteStockTransaction(id);
+          if (type === 'patients') await dataService.deletePatient(id);
           
           showToast("Record deleted and stock adjusted where applicable.", "success");
           loadData();
@@ -573,6 +586,12 @@ const App: React.FC = () => {
                   transaction_date: editItem.transaction_date,
                   source: editItem.source,
                   quantity: Number(editItem.quantity)
+              });
+          } else if (editType === 'patients') {
+              await dataService.updatePatient(editItem.id, {
+                  full_name: editItem.full_name,
+                  national_id: editItem.national_id,
+                  phone_number: editItem.phone_number
               });
           }
           showToast("Record updated successfully", "success");
@@ -734,8 +753,16 @@ const App: React.FC = () => {
                     {editType === 'hcps' && (
                         <>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label><input type="text" className="w-full border p-2" value={editItem.full_name} onChange={e => setEditItem({...editItem, full_name: e.target.value})} /></div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label><input type="text" className="w-full border p-2" value={editItem.specialty} onChange={e => setEditItem({...editItem, specialty: e.target.value})} /></div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital</label><input type="text" className="w-full border p-2" value={editItem.hospital} onChange={e => setEditItem({...editItem, hospital: e.target.value})} /></div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label>
+                                <input type="text" className="w-full border p-2" value={editItem.specialty} onChange={e => setEditItem({...editItem, specialty: e.target.value})} list="specialty-suggestions-edit" />
+                                <datalist id="specialty-suggestions-edit">{hcpSpecialties.map(s => <option key={s} value={s} />)}</datalist>
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital</label>
+                                <input type="text" className="w-full border p-2" value={editItem.hospital} onChange={e => setEditItem({...editItem, hospital: e.target.value})} list="hospital-suggestions-edit" />
+                                <datalist id="hospital-suggestions-edit">{hcpHospitals.map(h => <option key={h} value={h} />)}</datalist>
+                             </div>
                         </>
                     )}
                     {editType === 'locations' && (
@@ -750,6 +777,13 @@ const App: React.FC = () => {
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label><input type="date" className="w-full border p-2" value={editItem.transaction_date} onChange={e => setEditItem({...editItem, transaction_date: e.target.value})} /></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label><input type="number" className="w-full border p-2" value={editItem.quantity} onChange={e => setEditItem({...editItem, quantity: e.target.value})} /></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source / Reason</label><input type="text" className="w-full border p-2" value={editItem.source} onChange={e => setEditItem({...editItem, source: e.target.value})} /></div>
+                        </>
+                    )}
+                    {editType === 'patients' && (
+                        <>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Full Name</label><input type="text" className="w-full border p-2" value={editItem.full_name} onChange={e => setEditItem({...editItem, full_name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">National ID</label><input type="text" className="w-full border p-2 font-mono" value={editItem.national_id} onChange={e => setEditItem({...editItem, national_id: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Phone Number</label><input type="text" className="w-full border p-2 font-mono" value={editItem.phone_number} onChange={e => setEditItem({...editItem, phone_number: e.target.value})} /></div>
                         </>
                     )}
                     <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Save Changes</button>
@@ -768,8 +802,16 @@ const App: React.FC = () => {
                 </div>
                 <form onSubmit={handleCreateHCP} className="p-6 space-y-4">
                     <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label><input required type="text" placeholder="Dr. Name" className="w-full border p-2" value={newHCP.full_name} onChange={e => setNewHCP({...newHCP, full_name: e.target.value})} /></div>
-                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label><input type="text" placeholder="e.g. Endocrinology" className="w-full border p-2" value={newHCP.specialty} onChange={e => setNewHCP({...newHCP, specialty: e.target.value})} /></div>
-                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital / Clinic</label><input required type="text" placeholder="Hospital Name" className="w-full border p-2" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} /></div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label>
+                        <input type="text" placeholder="e.g. Endocrinology" className="w-full border p-2" value={newHCP.specialty} onChange={e => setNewHCP({...newHCP, specialty: e.target.value})} list="specialty-suggestions" />
+                        <datalist id="specialty-suggestions">{hcpSpecialties.map(s => <option key={s} value={s} />)}</datalist>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital / Clinic</label>
+                        <input required type="text" placeholder="Hospital Name" className="w-full border p-2" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} list="hospital-suggestions" />
+                        <datalist id="hospital-suggestions">{hcpHospitals.map(h => <option key={h} value={h} />)}</datalist>
+                    </div>
                     <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide">Add to Directory</button>
                 </form>
             </div>
@@ -861,10 +903,11 @@ const App: React.FC = () => {
               ) : (
                   <>
                       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500"><h1 className="text-2xl font-bold text-slate-900">Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}</h1><p className="text-slate-500 text-sm">Here is your daily distribution overview.</p></div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 cursor-pointer hover:bg-yellow-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{deliveries.length}</h3></div><div className="bg-yellow-50 p-3 rounded-full group-hover:bg-[#FFC600] transition-colors"><Package className="w-6 h-6 text-[#FFC600] group-hover:text-black" /></div></div>
-                      <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-75 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Patients Reached</p><h3 className="text-3xl font-black text-slate-900">{new Set(deliveries.map(d => d.patient_id)).size}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Users className="w-6 h-6 text-slate-900" /></div></div>
-                      <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div onClick={() => { setActiveTab('custody'); }} className="bg-white p-6 shadow-sm border-l-4 border-blue-500 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 cursor-pointer hover:bg-blue-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">My Inventory</p><h3 className="text-3xl font-black text-slate-900">{repCustody?.current_stock || 0}</h3></div><div className="bg-blue-50 p-3 rounded-full group-hover:bg-blue-200 transition-colors"><Briefcase className="w-6 h-6 text-blue-600 group-hover:text-black" /></div></div>
+                        <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-75 cursor-pointer hover:bg-yellow-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{deliveries.length}</h3></div><div className="bg-yellow-50 p-3 rounded-full group-hover:bg-[#FFC600] transition-colors"><Package className="w-6 h-6 text-[#FFC600] group-hover:text-black" /></div></div>
+                        <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-100 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Patients Reached</p><h3 className="text-3xl font-black text-slate-900">{new Set(deliveries.map(d => d.patient_id)).size}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Users className="w-6 h-6 text-slate-900" /></div></div>
+                        <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
                       </div>
                   </>
               )}
@@ -1035,6 +1078,7 @@ const App: React.FC = () => {
                           <button onClick={() => setActiveTab('dashboard')} className="text-slate-400 hover:text-black p-2 bg-white border border-slate-200 rounded-lg shadow-sm" title="Back to Dashboard"><ArrowLeft className="w-5 h-5" /></button>
                           <div className="flex gap-4 border-b border-slate-200 pb-2 md:pb-0 md:border-0 pl-2">
                               <button onClick={() => setDbView('deliveries')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Transactions</button>
+                              <button onClick={() => setDbView('patients')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'patients' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Patients</button>
                               <button onClick={() => setDbView('hcps')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Doctors</button>
                               <button onClick={() => setDbView('locations')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Locations</button>
                               <button onClick={() => setDbView('stock')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>History</button>
@@ -1059,6 +1103,50 @@ const App: React.FC = () => {
                         <tbody className="divide-y divide-slate-100">{filterData(deliveries).map(d => (<tr key={d.id} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td><td className="px-6 py-4"><div className="font-bold text-slate-800">{d.patient?.full_name}</div><div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div></td><td className="px-6 py-4"><span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">{getProductName(d.product_id)}</span></td><td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}{d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}</td><td className="px-6 py-4 text-sm text-slate-600">{d.educator_name || '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                         </table>
                         {filterData(deliveries).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
+                    </div>
+                  )}
+
+                  {dbView === 'patients' && (
+                     <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto rounded-lg">
+                        <table className="w-full text-left min-w-[800px]">
+                            <thead className="bg-slate-50 border-b border-slate-200">
+                                <tr>
+                                    <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient Name</th>
+                                    <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Identifiers</th>
+                                    <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Total Pens</th>
+                                    <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Last Delivery</th>
+                                    <th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {filterData(patients).map(p => {
+                                    const patientDeliveries = deliveries.filter(d => d.patient_id === p.id).sort((a,b) => new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime());
+                                    const lastDelivery = patientDeliveries[0];
+                                    const totalPens = patientDeliveries.reduce((acc, curr) => acc + curr.quantity, 0);
+
+                                    return (
+                                        <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                                            <td className="px-6 py-4 font-bold text-slate-800">{p.full_name}</td>
+                                            <td className="px-6 py-4">
+                                                <div className="text-xs font-mono text-slate-600">ID: {p.national_id}</div>
+                                                <div className="text-xs font-mono text-slate-500">Ph: {p.phone_number}</div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className="inline-block px-2 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded border border-emerald-100">{totalPens} Pens</span>
+                                            </td>
+                                            <td className="px-6 py-4 text-sm text-slate-600">
+                                                {lastDelivery ? formatDateFriendly(lastDelivery.delivery_date) : <span className="text-slate-400 italic">No history</span>}
+                                            </td>
+                                            <td className="px-6 py-4 flex gap-2">
+                                                <button onClick={() => openEditModal('patients', p)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button>
+                                                <button onClick={() => handleDeleteItem('patients', p.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                        {filterData(patients).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
                     </div>
                   )}
 
