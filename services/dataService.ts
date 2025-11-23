@@ -15,25 +15,52 @@ const KEYS = {
 const updateHistoryText = async (oldText: string, newText: string) => {
     if (!oldText || !newText || oldText === newText) return;
     
+    // We only attempt to replace reasonably long names to avoid replacing common substrings accidentally
+    if (oldText.length < 3) return;
+
+    // Helper to safely replace text avoiding partial matches where possible
+    const safeReplace = (source: string, find: string, replace: string) => {
+        try {
+            // Escape special regex characters
+            const escapedFind = find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // Attempt to match word boundaries if it looks like a name/word
+            const regex = new RegExp(`\\b${escapedFind}\\b`, 'gi');
+            if (regex.test(source)) {
+                return source.replace(regex, replace);
+            }
+            // Fallback to simple replace if strict boundary check fails but string is present
+            // (e.g. if punctuation interferes)
+            return source.split(find).join(replace);
+        } catch (e) {
+            return source.split(find).join(replace);
+        }
+    };
+
     if (isSupabaseConfigured() && supabase) {
+         // Get transactions that might contain the old text
          const { data: txs } = await supabase.from('stock_transactions')
             .select('*')
             .ilike('source', `%${oldText}%`)
-            .limit(100);
+            .limit(500);
          
-         if (txs) {
+         if (txs && txs.length > 0) {
              for (const tx of txs) {
-                 const newSource = tx.source.replace(oldText, newText);
-                 await supabase.from('stock_transactions').update({ source: newSource }).eq('id', tx.id);
+                 const newSource = safeReplace(tx.source, oldText, newText);
+                 if (newSource !== tx.source) {
+                    await supabase.from('stock_transactions').update({ source: newSource }).eq('id', tx.id);
+                 }
              }
          }
     } else {
          const list: StockTransaction[] = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
          let changed = false;
          list.forEach(tx => {
-             if (tx.source && tx.source.includes(oldText)) {
-                 tx.source = tx.source.replace(oldText, newText);
-                 changed = true;
+             if (tx.source && tx.source.toLowerCase().includes(oldText.toLowerCase())) {
+                 const newSource = safeReplace(tx.source, oldText, newText);
+                 if (newSource !== tx.source) {
+                     tx.source = newSource;
+                     changed = true;
+                 }
              }
          });
          if (changed) localStorage.setItem(KEYS.STOCK, JSON.stringify(list));
@@ -45,7 +72,7 @@ export const dataService = {
   // --- PATIENTS ---
   async getPatients(): Promise<Patient[]> {
       if (isSupabaseConfigured() && supabase) {
-          const { data } = await supabase.from('patients').select('*');
+          const { data } = await supabase.from('patients').select('*').order('full_name');
           return data || [];
       } else {
           return JSON.parse(localStorage.getItem(KEYS.PATIENTS) || '[]');
@@ -100,14 +127,17 @@ export const dataService = {
         }
     }
 
-    if (oldPatient && updates.full_name) {
+    // Smart Rename: Update historical text references
+    if (oldPatient && updates.full_name && oldPatient.full_name !== updates.full_name) {
         await updateHistoryText(oldPatient.full_name, updates.full_name);
-        await updateHistoryText(oldPatient.national_id, updates.full_name);
+        // Also try to update if ID was used in text
+        await updateHistoryText(id, updates.full_name); 
     }
   },
 
   async deletePatient(id: string): Promise<void> {
       if (isSupabaseConfigured() && supabase) {
+          // Cascade: Delete deliveries first
           await supabase.from('deliveries').delete().eq('patient_id', id); 
           await supabase.from('patients').delete().eq('id', id);
       } else {
@@ -172,8 +202,9 @@ export const dataService = {
           }
       }
       
-      if (oldHCP && updates.full_name) {
+      if (oldHCP && updates.full_name && oldHCP.full_name !== updates.full_name) {
           await updateHistoryText(oldHCP.full_name, updates.full_name);
+          await updateHistoryText(id, updates.full_name);
       }
   },
 
@@ -249,13 +280,15 @@ export const dataService = {
           }
       }
 
-      if (oldCustody && updates.name) {
+      if (oldCustody && updates.name && oldCustody.name !== updates.name) {
           await updateHistoryText(oldCustody.name, updates.name);
+          await updateHistoryText(id, updates.name);
       }
   },
 
   async deleteCustody(id: string): Promise<void> {
       if (isSupabaseConfigured() && supabase) {
+          // Cascade delete transactions and deliveries related to this custody
           await supabase.from('stock_transactions').delete().eq('custody_id', id);
           await supabase.from('deliveries').delete().eq('custody_id', id);
           await supabase.from('custody').delete().eq('id', id);
@@ -267,6 +300,10 @@ export const dataService = {
           let txs = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
           txs = txs.filter((t: StockTransaction) => t.custody_id !== id);
           localStorage.setItem(KEYS.STOCK, JSON.stringify(txs));
+
+          let deliveries = JSON.parse(localStorage.getItem(KEYS.DELIVERIES) || '[]');
+          deliveries = deliveries.filter((d: Delivery) => d.custody_id !== id);
+          localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
       }
   },
 

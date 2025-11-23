@@ -42,8 +42,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.012",
-  version: "2.0.012"
+  name: "SPIN v2.0.013",
+  version: "2.0.013"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -92,6 +92,7 @@ const App: React.FC = () => {
   // Edit State
   const [editItem, setEditItem] = useState<any>(null);
   const [editType, setEditType] = useState<DBView | null>(null);
+  const [editDuplicateWarning, setEditDuplicateWarning] = useState(false);
   
   // Global Search for DB
   const [searchTerm, setSearchTerm] = useState('');
@@ -124,7 +125,7 @@ const App: React.FC = () => {
   const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString(), isPharmacy: false });
 
   // Stock Forms
-  const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '' });
+  const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '', date: getTodayString() });
   const [transferForm, setTransferForm] = useState({ 
       toCustodyId: '', 
       quantity: 0, 
@@ -232,6 +233,19 @@ const App: React.FC = () => {
       }
   }, [step, repCustody, selectedCustody]);
 
+  // Check for duplicates in Edit Modal when Patient or Product changes
+  useEffect(() => {
+      const checkEditDup = async () => {
+          if (editType === 'deliveries' && editItem?.patient_id && editItem?.product_id) {
+              const isDup = await dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id);
+              setEditDuplicateWarning(isDup);
+          } else {
+              setEditDuplicateWarning(false);
+          }
+      };
+      checkEditDup();
+  }, [editItem?.patient_id, editItem?.product_id, editType]);
+
   // Form Logic
   const handlePatientSearch = async () => {
     if (nidSearch.length < 3) {
@@ -337,7 +351,7 @@ const App: React.FC = () => {
         if (!targetRep) throw new Error("My Inventory not found");
         setRepCustody(targetRep);
 
-        const { quantity, educatorName } = receiveForm;
+        const { quantity, educatorName, date } = receiveForm;
         if (!quantity) {
             showToast("Please enter quantity.", "error");
             return;
@@ -346,11 +360,11 @@ const App: React.FC = () => {
         await dataService.processStockTransaction(
             targetRep.id,
             Number(quantity),
-            getTodayString(),
+            date || getTodayString(),
             `Educator: ${educatorName || 'Unknown'}`
         );
         showToast("Stock received successfully", "success");
-        setReceiveForm({ quantity: 0, educatorName: '' });
+        setReceiveForm({ quantity: 0, educatorName: '', date: getTodayString() });
         await loadData(); 
       } catch (err: any) {
           showToast(err.message, "error");
@@ -436,11 +450,9 @@ const App: React.FC = () => {
       e.preventDefault();
       try {
           if (editType === 'deliveries') {
-              // Ensure we re-check duplicates if patient/product changed
-              if (editItem.product_id && editItem.patient_id) {
-                  const isDup = await dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id);
-                   // In edit mode, we just warn via toast if strict, but here we assume if they are editing they know what they are doing.
-                   if (isDup) showToast("Warning: This edit creates a duplication conflict, but saved.", "info");
+              if (editDuplicateWarning) {
+                  // If warning exists, show info but proceed
+                  showToast("Note: Saved record is a duplicate delivery.", "info");
               }
 
               await dataService.updateDelivery(editItem.id, {
@@ -450,7 +462,8 @@ const App: React.FC = () => {
                   notes: editItem.notes,
                   hcp_id: editItem.hcp_id,
                   custody_id: editItem.custody_id,
-                  product_id: editItem.product_id
+                  product_id: editItem.product_id,
+                  patient_id: editItem.patient_id // Allow updating patient
               });
           } else if (editType === 'hcps') {
               await dataService.updateHCP(editItem.id, {
@@ -462,7 +475,7 @@ const App: React.FC = () => {
               await dataService.updateCustody(editItem.id, {
                   name: editItem.name,
                   current_stock: Number(editItem.current_stock),
-                  created_at: editItem.created_at // Assuming creation date is editable like new form
+                  created_at: editItem.created_at
               });
           } else if (editType === 'stock') {
               await dataService.updateStockTransaction(editItem.id, {
@@ -474,6 +487,7 @@ const App: React.FC = () => {
           showToast("Record updated successfully", "success");
           setEditItem(null);
           setEditType(null);
+          setEditDuplicateWarning(false);
           loadData();
       } catch (err: any) {
           showToast("Update failed: " + err.message, "error");
@@ -485,18 +499,18 @@ const App: React.FC = () => {
       let resolved = text;
       // Resolve Custody IDs
       custodies.forEach(c => {
-          if (resolved.includes(c.id)) resolved = resolved.replace(c.id, c.name);
+          if (resolved.includes(c.id)) resolved = resolved.split(c.id).join(c.name);
       });
       // Resolve HCP IDs
       hcps.forEach(h => {
-          if (resolved.includes(h.id)) resolved = resolved.replace(h.id, h.full_name);
+          if (resolved.includes(h.id)) resolved = resolved.split(h.id).join(h.full_name);
       });
-      // Resolve Patient IDs
+      // Resolve Patient IDs (Crucial for "replace patient id with his name")
       patients.forEach(p => {
-          if (resolved.includes(p.id)) resolved = resolved.replace(p.id, p.full_name);
+          if (resolved.includes(p.id)) resolved = resolved.split(p.id).join(p.full_name);
       });
       // Resolve User ID
-      if (user && resolved.includes(user.id)) resolved = resolved.replace(user.id, userProfile?.full_name || 'Me');
+      if (user && resolved.includes(user.id)) resolved = resolved.split(user.id).join(userProfile?.full_name || 'Me');
       
       return resolved;
   };
@@ -505,11 +519,11 @@ const App: React.FC = () => {
       if (!searchTerm) return data;
       const lower = searchTerm.toLowerCase();
       return data.filter(item => {
-          return Object.values(item).some(val => 
-              typeof val === 'string' && val.toLowerCase().includes(lower)
-          ) || (item.patient?.full_name?.toLowerCase().includes(lower))
-            || (item.hcp?.full_name?.toLowerCase().includes(lower))
-            || (item.custody?.name?.toLowerCase().includes(lower));
+          // Flatten item for deep search
+          const stringify = (obj: any): string => {
+             return Object.values(obj || {}).map(v => typeof v === 'object' ? stringify(v) : v).join(' ');
+          };
+          return stringify(item).toLowerCase().includes(lower);
       });
   };
 
@@ -545,19 +559,29 @@ const App: React.FC = () => {
 
       {/* GENERIC EDIT MODAL */}
       {editItem && editType && (
-         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); }}>
+         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); }}>
              <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                  <div className="bg-black p-4 flex items-center justify-between sticky top-0 z-10">
                      <div className="flex items-center gap-3">
                         <Pencil className="w-5 h-5 text-[#FFC600]" />
                         <h3 className="text-white font-bold">Edit Record</h3>
                      </div>
-                     <button onClick={() => { setEditItem(null); setEditType(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+                     <button onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
                 <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
                     {editType === 'deliveries' && (
                         <>
+                             {editDuplicateWarning && (
+                                <div className="bg-yellow-50 rounded p-3 border border-yellow-200 flex items-start gap-3">
+                                    <AlertTriangle className="w-5 h-5 text-yellow-600 shrink-0" />
+                                    <div>
+                                        <p className="text-xs font-bold text-yellow-800 uppercase">Duplicate Warning</p>
+                                        <p className="text-xs text-yellow-700">Patient recently received this product.</p>
+                                    </div>
+                                </div>
+                             )}
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Delivery Date</label><input type="date" className="w-full border p-2" value={editItem.delivery_date} onChange={e => setEditItem({...editItem, delivery_date: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Patient</label><select className="w-full border p-2 bg-white" value={editItem.patient_id} onChange={e => setEditItem({...editItem, patient_id: e.target.value})}>{patients.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Prescriber (HCP)</label><select className="w-full border p-2 bg-white" value={editItem.hcp_id} onChange={e => setEditItem({...editItem, hcp_id: e.target.value})}>{hcps.map(h => <option key={h.id} value={h.id}>{h.full_name}</option>)}</select></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label><select className="w-full border p-2 bg-white" value={editItem.product_id} onChange={e => setEditItem({...editItem, product_id: e.target.value})}>{PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source Custody</label><select className="w-full border p-2 bg-white" value={editItem.custody_id} onChange={e => setEditItem({...editItem, custody_id: e.target.value})}>{custodies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
@@ -717,20 +741,27 @@ const App: React.FC = () => {
                             <div className="text-right"><span className="text-5xl font-black text-slate-900 tracking-tighter">{repCustody?.current_stock || 0}</span><span className="text-xs text-slate-500 block uppercase font-bold mt-1">Pens Available</span></div>
                         </div>
                         <div className="p-6 bg-slate-900 text-white flex flex-col md:flex-row gap-4 items-start">
-                            <div className="flex-1">
+                            <div className="flex-1 w-full">
                                 <h3 className="font-bold text-white flex items-center gap-2"><Package className="w-4 h-4 text-[#FFC600]" /> Receive Pens</h3>
                                 <p className="text-xs text-slate-400 mb-3">Add stock received from Patient Educator.</p>
                                 <form onSubmit={handleReceiveStock} className="flex flex-wrap gap-3 items-end w-full">
-                                    <div>
+                                    <div className="flex-1 min-w-[150px]">
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Receive Date</label>
+                                        <input type="date" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" value={receiveForm.date} onChange={e => setReceiveForm({...receiveForm, date: e.target.value})} />
+                                    </div>
+                                    <div className="flex-1 min-w-[150px]">
                                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source Educator</label>
-                                        <input type="text" required placeholder="Educator Name" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-40" value={receiveForm.educatorName} onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})} list="educator-suggestions" />
+                                        <input type="text" required placeholder="Educator Name" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" value={receiveForm.educatorName} onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})} list="educator-suggestions" />
                                         <datalist id="educator-suggestions">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist>
                                     </div>
-                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label><input type="number" min="1" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-20" placeholder="0" value={receiveForm.quantity} onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})} /></div>
-                                    <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400">Add to Stock</button>
+                                    <div className="w-24">
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
+                                        <input type="number" min="1" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" placeholder="0" value={receiveForm.quantity} onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})} />
+                                    </div>
+                                    <button type="submit" className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400 whitespace-nowrap">Add to Stock</button>
                                 </form>
                             </div>
-                            <div className="w-full md:w-64 border-l border-slate-700 pl-4">
+                            <div className="w-full md:w-80 border-l border-slate-700 md:pl-4 mt-6 md:mt-0">
                                 <h4 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2"><History className="w-3 h-3" /> Recent Additions</h4>
                                 <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
                                     {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).slice(0, 5).map(t => (
@@ -738,8 +769,10 @@ const App: React.FC = () => {
                                             <span>{formatDateFriendly(t.transaction_date)}</span>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
-                                                <button onClick={() => openEditModal('tx', t)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-blue-400 transition-opacity"><Pencil className="w-3 h-3" /></button>
-                                                <button onClick={() => handleDeleteItem('tx', t.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-500 transition-opacity"><Trash2 className="w-3 h-3" /></button>
+                                                <div className="flex gap-1">
+                                                    <button onClick={() => openEditModal('tx', t)} className="text-slate-500 hover:text-blue-400 transition-colors" title="Edit"><Pencil className="w-3 h-3" /></button>
+                                                    <button onClick={() => handleDeleteItem('tx', t.id)} className="text-slate-500 hover:text-red-500 transition-colors" title="Delete"><Trash2 className="w-3 h-3" /></button>
+                                                </div>
                                             </div>
                                         </div>
                                     ))}
@@ -811,14 +844,11 @@ const App: React.FC = () => {
                       {foundPatient && (
                           <>
                              {duplicateWarning && (
-                                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4 animate-in slide-in-from-top-2">
-                                    <div className="flex items-start gap-3">
-                                        <Info className="w-5 h-5 text-yellow-600 shrink-0" />
-                                        <div>
-                                            <p className="font-bold text-yellow-800 uppercase text-xs">Duplication Notice</p>
-                                            <p className="text-sm text-yellow-700 mb-1">This patient has already received this product recently.</p>
-                                            <p className="text-xs text-yellow-600">You may proceed, but please verify this is a valid resupply.</p>
-                                        </div>
+                                <div className="bg-yellow-50 rounded-lg p-3 mb-4 animate-in slide-in-from-top-2 border border-yellow-200 flex items-center gap-3">
+                                    <div className="bg-yellow-100 p-1.5 rounded-full"><Info className="w-4 h-4 text-yellow-700" /></div>
+                                    <div>
+                                        <p className="font-bold text-yellow-800 text-xs uppercase tracking-wide">Duplication Notice</p>
+                                        <p className="text-xs text-yellow-700">Patient recently received this product. Proceed with caution.</p>
                                     </div>
                                 </div>
                              )}
@@ -834,7 +864,7 @@ const App: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select Doctor --</option>{hcps.map(h => (<option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>))}</select></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label><input type="text" placeholder="Name" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-list-delivery" /><datalist id="educator-list-delivery">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist><div className="flex flex-wrap gap-1 mt-1">{educatorSuggestions.slice(0, 6).map(s => (<button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>))}</div></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div></div>
                           <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => { setSelectedProduct(p.id); if(foundPatient) dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
-                          <button onClick={handleSubmitDelivery} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>{duplicateWarning ? 'Proceed with Duplicate Entry' : 'Confirm Delivery'}</button>
+                          <button onClick={handleSubmitDelivery} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>{duplicateWarning ? 'Confirm Delivery (Review)' : 'Confirm Delivery'}</button>
                       </div>
                       </div>
                   </div>
