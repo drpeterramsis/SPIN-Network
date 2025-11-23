@@ -34,7 +34,9 @@ import {
   Pencil,
   Save,
   Trash2,
-  Info
+  Info,
+  Download,
+  ArrowLeft
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -42,8 +44,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.015",
-  version: "2.0.015"
+  name: "SPIN v2.0.016",
+  version: "2.0.016"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -75,6 +77,7 @@ const App: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [notification, setNotification] = useState<{msg: string, type: 'success'|'error'|'info'} | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
   
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [dbView, setDbView] = useState<DBView>('deliveries');
@@ -93,6 +96,7 @@ const App: React.FC = () => {
   const [editItem, setEditItem] = useState<any>(null);
   const [editType, setEditType] = useState<DBView | null>(null);
   const [editDuplicateWarning, setEditDuplicateWarning] = useState(false);
+  const [editPatientDetails, setEditPatientDetails] = useState<{national_id: string, phone_number: string} | null>(null);
   
   // Global Search for DB
   const [searchTerm, setSearchTerm] = useState('');
@@ -136,6 +140,23 @@ const App: React.FC = () => {
 
   const showToast = (msg: string, type: 'success'|'error'|'info' = 'success') => {
       setNotification({ msg, type });
+  };
+
+  // PWA Install Prompt
+  useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = () => {
+    if(installPrompt) {
+        installPrompt.prompt();
+        setInstallPrompt(null);
+    }
   };
 
   // Initialization
@@ -245,6 +266,21 @@ const App: React.FC = () => {
       };
       checkEditDup();
   }, [editItem?.patient_id, editItem?.product_id, editType]);
+
+  // Initialize editPatientDetails when editItem changes
+  useEffect(() => {
+      if (editType === 'deliveries' && editItem?.patient_id) {
+          const p = patients.find(pat => pat.id === editItem.patient_id);
+          if (p) {
+              setEditPatientDetails({ national_id: p.national_id, phone_number: p.phone_number });
+          } else {
+              setEditPatientDetails(null);
+          }
+      } else {
+          setEditPatientDetails(null);
+      }
+  }, [editItem, editType, patients]);
+
 
   // Form Logic
   const handlePatientSearch = async () => {
@@ -483,8 +519,18 @@ const App: React.FC = () => {
       try {
           if (editType === 'deliveries') {
               if (editDuplicateWarning) {
-                  // If warning exists, show info but proceed
-                  showToast("Note: Saved record is a duplicate delivery.", "info");
+                  // If duplication exists, require explicit confirmation via browser prompt or just strict notification
+                  if (!window.confirm("DUPLICATION WARNING: This patient has already received this product recently. Are you sure you want to approve this assignment?")) {
+                      return;
+                  }
+              }
+
+              // Update Patient Details if changed
+              if (editItem.patient_id && editPatientDetails) {
+                 await dataService.updatePatient(editItem.patient_id, {
+                     national_id: editPatientDetails.national_id,
+                     phone_number: editPatientDetails.phone_number
+                 });
               }
 
               await dataService.updateDelivery(editItem.id, {
@@ -495,7 +541,7 @@ const App: React.FC = () => {
                   hcp_id: editItem.hcp_id,
                   custody_id: editItem.custody_id,
                   product_id: editItem.product_id,
-                  patient_id: editItem.patient_id // Allow updating patient
+                  patient_id: editItem.patient_id
               });
           } else if (editType === 'hcps') {
               await dataService.updateHCP(editItem.id, {
@@ -520,6 +566,7 @@ const App: React.FC = () => {
           setEditItem(null);
           setEditType(null);
           setEditDuplicateWarning(false);
+          setEditPatientDetails(null);
           loadData();
       } catch (err: any) {
           showToast("Update failed: " + err.message, "error");
@@ -595,34 +642,62 @@ const App: React.FC = () => {
           <Toast message={notification.msg} type={notification.type} onClose={() => setNotification(null)} />
       )}
 
+      {/* PWA INSTALL BANNER */}
+      {installPrompt && (
+          <div className="bg-black text-white p-3 flex justify-between items-center z-50 sticky top-0 shadow-lg">
+              <div className="flex items-center gap-3">
+                  <div className="bg-[#FFC600] p-1"><Hexagon className="w-4 h-4 text-black" /></div>
+                  <div className="text-xs">
+                      <p className="font-bold text-[#FFC600]">INSTALL WEB APP</p>
+                      <p className="text-slate-400">Add SPIN to your home screen for better experience.</p>
+                  </div>
+              </div>
+              <div className="flex items-center gap-2">
+                  <button onClick={() => setInstallPrompt(null)} className="text-slate-400 hover:text-white p-2"><X className="w-4 h-4"/></button>
+                  <button onClick={handleInstallClick} className="bg-[#FFC600] text-black px-3 py-1.5 text-xs font-bold uppercase rounded hover:bg-yellow-400 flex items-center gap-1"><Download className="w-3 h-3"/> Install</button>
+              </div>
+          </div>
+      )}
+
       <Auth isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} onLogin={setUser} />
       {user && <ProfileModal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} user={user} onLogout={() => { setUser(null); setShowProfileModal(false); }} />}
 
       {/* GENERIC EDIT MODAL */}
       {editItem && editType && (
-         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); }}>
+         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); setEditPatientDetails(null); }}>
              <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                  <div className="bg-black p-4 flex items-center justify-between sticky top-0 z-10">
                      <div className="flex items-center gap-3">
                         <Pencil className="w-5 h-5 text-[#FFC600]" />
                         <h3 className="text-white font-bold">Edit Record</h3>
                      </div>
-                     <button onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+                     <button onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); setEditPatientDetails(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
                 <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
                     {editType === 'deliveries' && (
                         <>
                              {editDuplicateWarning && (
-                                <div className="bg-yellow-50 rounded p-3 border border-yellow-200 flex items-start gap-3">
-                                    <AlertTriangle className="w-5 h-5 text-yellow-600 shrink-0" />
+                                <div className="bg-red-50 rounded p-3 border border-red-200 flex items-start gap-3">
+                                    <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
                                     <div>
-                                        <p className="text-xs font-bold text-yellow-800 uppercase">Duplicate Warning</p>
-                                        <p className="text-xs text-yellow-700">Patient recently received this product.</p>
+                                        <p className="text-xs font-bold text-red-800 uppercase">Duplicate Alert</p>
+                                        <p className="text-xs text-red-700">Patient recently received this product. Approval required on save.</p>
                                     </div>
                                 </div>
                              )}
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Delivery Date</label><input type="date" className="w-full border p-2" value={editItem.delivery_date} onChange={e => setEditItem({...editItem, delivery_date: e.target.value})} /></div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Patient</label><select className="w-full border p-2 bg-white" value={editItem.patient_id} onChange={e => setEditItem({...editItem, patient_id: e.target.value})}>{patients.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></div>
+                             <div className="border-b border-slate-100 pb-4 mb-4">
+                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Patient</label>
+                                 <select className="w-full border p-2 bg-white mb-2" value={editItem.patient_id} onChange={e => setEditItem({...editItem, patient_id: e.target.value})}>{patients.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select>
+                                 {/* Edit Patient Details embedded */}
+                                 {editPatientDetails && (
+                                     <div className="bg-slate-50 p-3 rounded border border-slate-200 space-y-2">
+                                         <p className="text-[10px] font-bold text-slate-400 uppercase">Edit Patient Info</p>
+                                         <input type="text" placeholder="National ID" className="w-full text-xs border p-1" value={editPatientDetails.national_id} onChange={e => setEditPatientDetails({...editPatientDetails, national_id: e.target.value})} />
+                                         <input type="text" placeholder="Phone" className="w-full text-xs border p-1" value={editPatientDetails.phone_number} onChange={e => setEditPatientDetails({...editPatientDetails, phone_number: e.target.value})} />
+                                     </div>
+                                 )}
+                             </div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Prescriber (HCP)</label><select className="w-full border p-2 bg-white" value={editItem.hcp_id} onChange={e => setEditItem({...editItem, hcp_id: e.target.value})}>{hcps.map(h => <option key={h.id} value={h.id}>{h.full_name}</option>)}</select></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label><select className="w-full border p-2 bg-white" value={editItem.product_id} onChange={e => setEditItem({...editItem, product_id: e.target.value})}>{PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source Custody</label><select className="w-full border p-2 bg-white" value={editItem.custody_id} onChange={e => setEditItem({...editItem, custody_id: e.target.value})}>{custodies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
@@ -690,7 +765,7 @@ const App: React.FC = () => {
                         <input required type="text" placeholder="Pharmacy or Clinic Name" className="w-full border p-2" value={newClinicForm.name} onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})} />
                     </div>
                     <div>
-                         <label className="flex items-center gap-2 p-2 border rounded bg-slate-50 cursor-pointer">
+                         <label className="flex items-center gap-2 p-2 border rounded bg-slate-50 cursor-pointer hover:bg-slate-100">
                              <input type="checkbox" checked={newClinicForm.isPharmacy} onChange={e => setNewClinicForm({...newClinicForm, isPharmacy: e.target.checked})} />
                              <span className="text-sm font-bold">This is a Pharmacy</span>
                          </label>
@@ -762,9 +837,9 @@ const App: React.FC = () => {
                   <>
                       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500"><h1 className="text-2xl font-bold text-slate-900">Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}</h1><p className="text-slate-500 text-sm">Here is your daily distribution overview.</p></div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{deliveries.length}</h3></div><div className="bg-yellow-50 p-3 rounded-full"><Package className="w-6 h-6 text-[#FFC600]" /></div></div>
-                      <div className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-75"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Patients Reached</p><h3 className="text-3xl font-black text-slate-900">{new Set(deliveries.map(d => d.patient_id)).size}</h3></div><div className="bg-slate-100 p-3 rounded-full"><Users className="w-6 h-6 text-slate-900" /></div></div>
-                      <div className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
+                      <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 cursor-pointer hover:bg-yellow-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{deliveries.length}</h3></div><div className="bg-yellow-50 p-3 rounded-full group-hover:bg-[#FFC600] transition-colors"><Package className="w-6 h-6 text-[#FFC600] group-hover:text-black" /></div></div>
+                      <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-75 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Patients Reached</p><h3 className="text-3xl font-black text-slate-900">{new Set(deliveries.map(d => d.patient_id)).size}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Users className="w-6 h-6 text-slate-900" /></div></div>
+                      <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
                       </div>
                   </>
               )}
@@ -830,10 +905,16 @@ const App: React.FC = () => {
                                 <div className="flex items-center gap-3"><button onClick={() => setShowClinicModal(true)} className="text-xs font-bold uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1"><Plus className="w-3 h-3" /> Add Clinic</button><span className="text-xs font-bold bg-slate-200 px-2 py-1 rounded text-slate-600">{custodies.filter(c => c.type === 'clinic').length} Locations</span></div>
                             </div>
                             <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto custom-scrollbar">
-                                {custodies.filter(c => c.type === 'clinic').map(clinic => (
+                                {custodies.filter(c => c.type === 'clinic').map(clinic => {
+                                    const isPharmacy = clinic.name.toLowerCase().includes('pharmacy');
+                                    return (
                                     <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group flex justify-between items-center">
                                         <div>
-                                            <h4 className="font-bold text-slate-900 text-lg">{clinic.name}</h4>
+                                            <h4 className="font-bold text-slate-900 text-lg flex items-center gap-2">
+                                                {clinic.name}
+                                                {isPharmacy && <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200 font-bold uppercase">Pharmacy</span>}
+                                                {!isPharmacy && <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 font-bold uppercase">Clinic</span>}
+                                            </h4>
                                             <div className="flex flex-col gap-1 mt-1">
                                                 <p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p>
                                                 <p className="text-xs text-slate-500 font-bold">Last Supplied: {getLastSupplyDate(clinic.id)}</p>
@@ -844,7 +925,7 @@ const App: React.FC = () => {
                                             <button onClick={() => { setTransferForm(prev => ({...prev, toCustodyId: clinic.id, educatorName: ''})); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }} className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-2 text-xs font-bold uppercase rounded flex items-center gap-1">Supply <ArrowRight className="w-3 h-3" /></button>
                                         </div>
                                     </div>
-                                ))}
+                                )})}
                                 {custodies.filter(c => c.type === 'clinic').length === 0 && <div className="p-8 text-center text-slate-400 italic">No clinics registered yet.</div>}
                             </div>
                         </div>
@@ -925,11 +1006,14 @@ const App: React.FC = () => {
             ) : (
               <div className="space-y-6">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-4">
-                      <div className="flex gap-4 border-b border-slate-200 pb-2 overflow-x-auto w-full md:w-auto">
-                          <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Transactions</button>
-                          <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Doctors (HCPs)</button>
-                          <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Locations</button>
-                          <button onClick={() => setDbView('stock')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Stock History</button>
+                      <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+                          <button onClick={() => setActiveTab('dashboard')} className="text-slate-400 hover:text-black p-2 bg-white border border-slate-200 rounded-lg shadow-sm" title="Back to Dashboard"><ArrowLeft className="w-5 h-5" /></button>
+                          <div className="flex gap-4 border-b border-slate-200 pb-2 md:pb-0 md:border-0 pl-2">
+                              <button onClick={() => setDbView('deliveries')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Transactions</button>
+                              <button onClick={() => setDbView('hcps')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Doctors</button>
+                              <button onClick={() => setDbView('locations')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Locations</button>
+                              <button onClick={() => setDbView('stock')} className={`pb-2 md:pb-0 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 md:border-0 md:text-[#FFC600] md:bg-black md:px-3 md:py-1 md:rounded border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>History</button>
+                          </div>
                       </div>
                       <div className="relative w-full md:w-64">
                           <input 
@@ -937,14 +1021,14 @@ const App: React.FC = () => {
                               placeholder="Search Database..." 
                               value={searchTerm}
                               onChange={(e) => setSearchTerm(e.target.value)}
-                              className="w-full pl-10 pr-4 py-2 border border-slate-200 text-sm focus:border-[#FFC600] outline-none bg-white"
+                              className="w-full pl-10 pr-4 py-2 border border-slate-200 text-sm focus:border-[#FFC600] outline-none bg-white rounded-lg shadow-sm"
                           />
                           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                       </div>
                   </div>
 
                   {dbView === 'deliveries' && (
-                    <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto">
+                    <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto rounded-lg">
                         <table className="w-full text-left min-w-[800px]">
                         <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
                         <tbody className="divide-y divide-slate-100">{filterData(deliveries).map(d => (<tr key={d.id} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td><td className="px-6 py-4"><div className="font-bold text-slate-800">{d.patient?.full_name}</div><div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div></td><td className="px-6 py-4"><span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">{getProductName(d.product_id)}</span></td><td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}{d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}</td><td className="px-6 py-4 text-sm text-slate-600">{d.educator_name || '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
@@ -955,11 +1039,11 @@ const App: React.FC = () => {
 
                   {dbView === 'hcps' && (
                        <div className="space-y-4 animate-in fade-in">
-                           <div className="flex justify-end"><button onClick={() => setShowHCPModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Doctor</button></div>
-                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
+                           <div className="flex justify-end"><button onClick={() => setShowHCPModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800 rounded shadow-md"><Plus className="w-4 h-4" /> Add Doctor</button></div>
+                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto rounded-lg">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{filterData(hcps).map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4 text-slate-600">{h.specialty || '-'}</td><td className="px-6 py-4 text-slate-600">{h.hospital}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
+                                    <tbody className="divide-y divide-slate-100">{filterData(hcps).map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4">{h.specialty ? <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold uppercase">{h.specialty}</span> : '-'}</td><td className="px-6 py-4 text-slate-600">{h.hospital}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                                 </table>
                            </div>
                        </div>
@@ -967,11 +1051,23 @@ const App: React.FC = () => {
 
                   {dbView === 'locations' && (
                       <div className="space-y-4 animate-in fade-in">
-                           <div className="flex justify-end"><button onClick={() => setShowClinicModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800"><Plus className="w-4 h-4" /> Add Location</button></div>
-                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
+                           <div className="flex justify-end"><button onClick={() => setShowClinicModal(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 font-bold uppercase text-xs hover:bg-slate-800 rounded shadow-md"><Plus className="w-4 h-4" /> Add Location</button></div>
+                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto rounded-lg">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Location Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Stock Level</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{filterData(custodies).map(c => (<tr key={c.id}><td className="px-6 py-4 font-bold text-slate-800">{c.name}</td><td className="px-6 py-4 uppercase text-xs font-bold text-slate-500">{c.type}</td><td className="px-6 py-4 font-mono">{c.current_stock}</td><td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
+                                    <tbody className="divide-y divide-slate-100">{filterData(custodies).map(c => {
+                                        const isPharm = c.name.toLowerCase().includes('pharmacy');
+                                        return (
+                                        <tr key={c.id}>
+                                            <td className="px-6 py-4 font-bold text-slate-800">{c.name}</td>
+                                            <td className="px-6 py-4">
+                                                {c.type === 'rep' ? <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold uppercase">Rep</span> : (isPharm ? <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-1 rounded font-bold uppercase">Pharmacy</span> : <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-1 rounded font-bold uppercase">Clinic</span>)}
+                                            </td>
+                                            <td className="px-6 py-4 font-mono">{c.current_stock}</td>
+                                            <td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td>
+                                            <td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td>
+                                        </tr>
+                                    )})}</tbody>
                                 </table>
                            </div>
                        </div>
@@ -979,7 +1075,7 @@ const App: React.FC = () => {
 
                   {dbView === 'stock' && (
                       <div className="space-y-4 animate-in fade-in">
-                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
+                           <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto rounded-lg">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Custody</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Change</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Reason</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
                                     <tbody className="divide-y divide-slate-100">{filterData(stockTransactions).map(s => { const custody = custodies.find(c => c.id === s.custody_id); return (<tr key={s.id}><td className="px-6 py-4 text-slate-600 font-mono text-sm">{formatDateFriendly(s.transaction_date)}</td><td className="px-6 py-4 font-bold text-slate-800">{custody?.name || s.custody_id}</td><td className={`px-6 py-4 font-mono font-bold ${s.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{s.quantity > 0 ? '+' : ''}{s.quantity}</td><td className="px-6 py-4 text-slate-600 text-sm">{resolveSourceText(s.source)}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('stock', s)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('stock', s.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>);})}</tbody>

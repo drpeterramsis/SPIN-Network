@@ -347,22 +347,15 @@ export const dataService = {
   },
 
   async logDelivery(delivery: Omit<Delivery, 'id'>, userName: string): Promise<void> {
-      // 1. Deduct Stock
+      // 1. Deduct Stock using processStockTransaction (it handles custody update)
+      // Fixed: Removed manual updateCustody call to prevent double deduction
       if (delivery.custody_id) {
-          const custodyList = await this.getCustodies();
-          const custody = custodyList.find(c => c.id === delivery.custody_id);
-          if (custody) {
-              const newStock = (custody.current_stock || 0) - 1;
-              await this.updateCustody(custody.id, { current_stock: newStock });
-              
-              // Log the stock movement
-              await this.processStockTransaction(
-                  custody.id,
-                  -1,
-                  delivery.delivery_date,
-                  `Delivery to Patient: ${delivery.patient?.full_name || delivery.patient_id}`
-              );
-          }
+          await this.processStockTransaction(
+              delivery.custody_id,
+              -1,
+              delivery.delivery_date,
+              `Delivery to Patient: ${delivery.patient?.full_name || delivery.patient_id}`
+          );
       }
 
       // 2. Save Delivery
