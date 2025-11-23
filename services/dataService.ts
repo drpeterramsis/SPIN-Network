@@ -396,6 +396,59 @@ export const dataService = {
   },
 
   async deleteDelivery(id: string): Promise<void> {
+      // 1. Get the delivery details first
+      let delivery: Delivery | null = null;
+      if (isSupabaseConfigured() && supabase) {
+          const { data } = await supabase.from('deliveries').select('*').eq('id', id).single();
+          delivery = data;
+      } else {
+          const list = JSON.parse(localStorage.getItem(KEYS.DELIVERIES) || '[]');
+          delivery = list.find((d: Delivery) => d.id === id);
+      }
+
+      // 2. Restore Stock and Remove Transaction History
+      if (delivery && delivery.custody_id) {
+          // A. Restore Stock to Custody
+          const custodies = await this.getCustodies();
+          const custody = custodies.find(c => c.id === delivery.custody_id);
+          
+          if (custody) {
+              // Add stock back
+              await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + delivery.quantity });
+
+              // B. Attempt to delete the stock transaction to clear history
+              // Since we don't have a direct link ID, we look for a matching transaction
+              let txIdToDelete = null;
+              
+              if (isSupabaseConfigured() && supabase) {
+                   // Search for a transaction: same custody, same negative qty, same date
+                   const { data: txs } = await supabase.from('stock_transactions')
+                      .select('*')
+                      .eq('custody_id', custody.id)
+                      .eq('quantity', -delivery.quantity)
+                      .eq('transaction_date', delivery.delivery_date)
+                      .limit(1); // Take the first match
+                   
+                   if (txs && txs.length > 0) {
+                       txIdToDelete = txs[0].id;
+                   }
+              } else {
+                   const txs = JSON.parse(localStorage.getItem(KEYS.STOCK) || '[]');
+                   const match = txs.find((t: StockTransaction) => 
+                       t.custody_id === custody.id && 
+                       t.quantity === -delivery.quantity && 
+                       t.transaction_date === delivery.delivery_date
+                   );
+                   if (match) txIdToDelete = match.id;
+              }
+
+              if (txIdToDelete) {
+                  await this.deleteStockTransaction(txIdToDelete);
+              }
+          }
+      }
+
+      // 3. Delete the Delivery Record
       if (isSupabaseConfigured() && supabase) {
           await supabase.from('deliveries').delete().eq('id', id);
       } else {

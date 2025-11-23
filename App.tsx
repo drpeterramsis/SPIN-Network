@@ -36,7 +36,8 @@ import {
   Trash2,
   Info,
   Download,
-  ArrowLeft
+  ArrowLeft,
+  RefreshCw
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -44,8 +45,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.016",
-  version: "2.0.016"
+  name: "SPIN v2.0.017",
+  version: "2.0.017"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -255,16 +256,26 @@ const App: React.FC = () => {
   }, [step, repCustody, selectedCustody]);
 
   // Check for duplicates in Edit Modal when Patient or Product changes
-  useEffect(() => {
-      const checkEditDup = async () => {
-          if (editType === 'deliveries' && editItem?.patient_id && editItem?.product_id) {
-              const isDup = await dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id);
-              setEditDuplicateWarning(isDup);
+  const checkEditDuplication = async () => {
+      if (editType === 'deliveries' && editItem?.patient_id && editItem?.product_id) {
+          const isDup = await dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id);
+          setEditDuplicateWarning(isDup);
+          if (isDup) {
+             showToast("Duplicate Detected: Patient recently received this product.", "info");
           } else {
-              setEditDuplicateWarning(false);
+             showToast("No duplicates found.", "success");
           }
-      };
-      checkEditDup();
+      }
+  };
+
+  useEffect(() => {
+      // Auto-check on load/change
+      if (editType === 'deliveries' && editItem?.patient_id && editItem?.product_id) {
+          // Silent check
+          dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id).then(setEditDuplicateWarning);
+      } else {
+          setEditDuplicateWarning(false);
+      }
   }, [editItem?.patient_id, editItem?.product_id, editType]);
 
   // Initialize editPatientDetails when editItem changes
@@ -495,14 +506,14 @@ const App: React.FC = () => {
 
   // --- DELETE FUNCTIONALITY ---
   const handleDeleteItem = async (type: DBView | 'tx', id: string) => {
-      if (!window.confirm("Are you sure you want to delete this record? This will delete all related records (cascading).")) return;
+      if (!window.confirm("Are you sure you want to delete this record? This will delete all related records (cascading) and try to restore any stock.")) return;
       try {
           if (type === 'deliveries') await dataService.deleteDelivery(id);
           if (type === 'hcps') await dataService.deleteHCP(id);
           if (type === 'locations') await dataService.deleteCustody(id);
           if (type === 'stock' || type === 'tx') await dataService.deleteStockTransaction(id);
           
-          showToast("Record deleted", "success");
+          showToast("Record deleted and stock adjusted where applicable.", "success");
           loadData();
       } catch (err: any) {
           showToast("Delete failed: " + err.message, "error");
@@ -518,10 +529,12 @@ const App: React.FC = () => {
       e.preventDefault();
       try {
           if (editType === 'deliveries') {
-              if (editDuplicateWarning) {
-                  // If duplication exists, require explicit confirmation via browser prompt or just strict notification
-                  if (!window.confirm("DUPLICATION WARNING: This patient has already received this product recently. Are you sure you want to approve this assignment?")) {
-                      return;
+              // Final duplicate check before save
+              if (editItem?.patient_id && editItem?.product_id) {
+                  const isDup = await dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id);
+                  if (isDup) {
+                      const confirm = window.confirm("WARNING: DUPLICATE DETECTED!\n\nThis patient has already received this product recently. Are you sure you want to approve this assignment?");
+                      if (!confirm) return;
                   }
               }
 
@@ -687,7 +700,10 @@ const App: React.FC = () => {
                              )}
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Delivery Date</label><input type="date" className="w-full border p-2" value={editItem.delivery_date} onChange={e => setEditItem({...editItem, delivery_date: e.target.value})} /></div>
                              <div className="border-b border-slate-100 pb-4 mb-4">
-                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Patient</label>
+                                 <div className="flex justify-between items-center mb-1">
+                                    <label className="block text-xs font-bold text-slate-500 uppercase">Patient</label>
+                                    <button type="button" onClick={checkEditDuplication} className="text-[10px] bg-slate-100 hover:bg-[#FFC600] px-2 py-1 rounded flex items-center gap-1 font-bold uppercase transition-colors"><RefreshCw className="w-3 h-3" /> Check Duplication</button>
+                                 </div>
                                  <select className="w-full border p-2 bg-white mb-2" value={editItem.patient_id} onChange={e => setEditItem({...editItem, patient_id: e.target.value})}>{patients.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select>
                                  {/* Edit Patient Details embedded */}
                                  {editPatientDetails && (
@@ -700,7 +716,16 @@ const App: React.FC = () => {
                              </div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Prescriber (HCP)</label><select className="w-full border p-2 bg-white" value={editItem.hcp_id} onChange={e => setEditItem({...editItem, hcp_id: e.target.value})}>{hcps.map(h => <option key={h.id} value={h.id}>{h.full_name}</option>)}</select></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label><select className="w-full border p-2 bg-white" value={editItem.product_id} onChange={e => setEditItem({...editItem, product_id: e.target.value})}>{PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source Custody</label><select className="w-full border p-2 bg-white" value={editItem.custody_id} onChange={e => setEditItem({...editItem, custody_id: e.target.value})}>{custodies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                             <div>
+                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source Custody</label>
+                                 <select className="w-full border p-2 bg-white" value={editItem.custody_id} onChange={e => setEditItem({...editItem, custody_id: e.target.value})}>
+                                     {custodies.map(c => (
+                                        <option key={c.id} value={c.id}>
+                                            {c.name.toLowerCase().includes('pharmacy') ? c.name : c.type === 'clinic' ? `${c.name} (Clinic)` : c.name}
+                                        </option>
+                                    ))}
+                                 </select>
+                             </div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rx Date</label><input type="date" className="w-full border p-2" value={editItem.rx_date || ''} onChange={e => setEditItem({...editItem, rx_date: e.target.value})} /></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Name</label><input type="text" className="w-full border p-2" value={editItem.educator_name} onChange={e => setEditItem({...editItem, educator_name: e.target.value})} /></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Notes</label><textarea className="w-full border p-2" rows={3} value={editItem.notes || ''} onChange={e => setEditItem({...editItem, notes: e.target.value})} /></div>
@@ -936,7 +961,7 @@ const App: React.FC = () => {
                                 <form onSubmit={handleTransferStock} className="space-y-4">
                                     <div>
                                         <div className="flex justify-between items-end mb-1"><label className="block text-[10px] font-bold text-slate-400 uppercase">Destination</label><button type="button" onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div>
-                                        <select className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.toCustodyId} onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})} required><option value="">-- Select Clinic --</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name}</option>))}</select>
+                                        <select className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.toCustodyId} onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})} required><option value="">-- Select Clinic --</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name.toLowerCase().includes('pharmacy') ? c.name : `${c.name} (Clinic)`}</option>))}</select>
                                     </div>
                                     <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity (Pens)</label><input type="number" min="1" className="w-full border p-2 bg-slate-50 text-sm font-bold" value={transferForm.quantity} onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})} /></div>
                                     <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Supply Date</label><input type="date" className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.date} onChange={e => setTransferForm({...transferForm, date: e.target.value})} /></div>
@@ -988,7 +1013,7 @@ const App: React.FC = () => {
                       <div className={`transition-opacity ${step !== 2 ? 'opacity-50 pointer-events-none hidden' : ''}`}>
                       <div className="flex justify-between items-center mb-6"><label className="block text-xs font-bold text-slate-500 uppercase">Step 2: Transaction Details</label><button onClick={() => setStep(1)} className="text-xs text-slate-400 underline flex items-center gap-1"><Undo2 className="w-3 h-3"/> Change Patient</button></div>
                       <div className="space-y-6">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Delivery Date</label><input type="date" required className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} /></div><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">From Custody (Source) <span className="text-red-500">*</span></label><button onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Add New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedCustody} onChange={e => setSelectedCustody(e.target.value)}><option value="">-- Select Source --</option>{custodies.filter(c => c.type === 'rep').map(c => (<option key={c.id} value={c.id}>My Inventory (Rep)</option>))}<option disabled>──────────</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name} (Clinic)</option>))}</select></div></div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Delivery Date</label><input type="date" required className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} /></div><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">From Custody (Source) <span className="text-red-500">*</span></label><button onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Add New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedCustody} onChange={e => setSelectedCustody(e.target.value)}><option value="">-- Select Source --</option>{custodies.filter(c => c.type === 'rep').map(c => (<option key={c.id} value={c.id}>My Inventory (Rep)</option>))}<option disabled>──────────</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name.toLowerCase().includes('pharmacy') ? c.name : `${c.name} (Clinic)`}</option>))}</select></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select Doctor --</option>{hcps.map(h => (<option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>))}</select></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label><input type="text" placeholder="Name" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-list-delivery" /><datalist id="educator-list-delivery">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist><div className="flex flex-wrap gap-1 mt-1">{educatorSuggestions.slice(0, 6).map(s => (<button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>))}</div></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div></div>
                           <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => { setSelectedProduct(p.id); if(foundPatient) dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
@@ -1043,7 +1068,7 @@ const App: React.FC = () => {
                            <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto rounded-lg">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{filterData(hcps).map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4">{h.specialty ? <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold uppercase">{h.specialty}</span> : '-'}</td><td className="px-6 py-4 text-slate-600">{h.hospital}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
+                                    <tbody className="divide-y divide-slate-100">{filterData(hcps).map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4">{h.specialty ? <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold uppercase">{h.specialty}</span> : '-'}</td><td className="px-6 py-4">{h.hospital ? <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold uppercase border border-slate-200">{h.hospital}</span> : '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                                 </table>
                            </div>
                        </div>
