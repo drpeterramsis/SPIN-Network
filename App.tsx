@@ -42,8 +42,8 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // Defined locally to avoid JSON module import issues in browser environments
 const METADATA = {
-  name: "SPIN v2.0.011",
-  version: "2.0.011"
+  name: "SPIN v2.0.012",
+  version: "2.0.012"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database';
@@ -82,6 +82,7 @@ const App: React.FC = () => {
   // Data States
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [hcps, setHcps] = useState<HCP[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [custodies, setCustodies] = useState<Custody[]>([]);
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([]);
   const [repCustody, setRepCustody] = useState<Custody | null>(null);
@@ -92,6 +93,9 @@ const App: React.FC = () => {
   const [editItem, setEditItem] = useState<any>(null);
   const [editType, setEditType] = useState<DBView | null>(null);
   
+  // Global Search for DB
+  const [searchTerm, setSearchTerm] = useState('');
+
   // Delivery Form States
   const [step, setStep] = useState(1);
   const [nidSearch, setNidSearch] = useState('');
@@ -161,17 +165,19 @@ const App: React.FC = () => {
     };
 
     try {
-      const [d, h, c, s] = await Promise.all([
+      const [d, h, c, s, p] = await Promise.all([
         safeFetch(() => dataService.getDeliveries(), []),
         safeFetch(() => dataService.getHCPs(), []),
         safeFetch(() => dataService.getCustodies(), []),
-        safeFetch(() => dataService.getStockTransactions(), [])
+        safeFetch(() => dataService.getStockTransactions(), []),
+        safeFetch(() => dataService.getPatients(), [])
       ]);
       
       setDeliveries(d);
       setHcps(h);
       setCustodies(c);
       setStockTransactions(s);
+      setPatients(p);
       
       try {
           const repC = await dataService.getRepCustody();
@@ -407,7 +413,7 @@ const App: React.FC = () => {
 
   // --- DELETE FUNCTIONALITY ---
   const handleDeleteItem = async (type: DBView | 'tx', id: string) => {
-      if (!window.confirm("Are you sure you want to delete this record? This may affect related data.")) return;
+      if (!window.confirm("Are you sure you want to delete this record? This will delete all related records (cascading).")) return;
       try {
           if (type === 'deliveries') await dataService.deleteDelivery(id);
           if (type === 'hcps') await dataService.deleteHCP(id);
@@ -421,8 +427,8 @@ const App: React.FC = () => {
       }
   };
 
-  const openEditModal = (type: DBView, item: any) => {
-      setEditType(type);
+  const openEditModal = (type: DBView | 'tx', item: any) => {
+      setEditType(type === 'tx' ? 'stock' : type);
       setEditItem(item);
   };
 
@@ -430,11 +436,21 @@ const App: React.FC = () => {
       e.preventDefault();
       try {
           if (editType === 'deliveries') {
+              // Ensure we re-check duplicates if patient/product changed
+              if (editItem.product_id && editItem.patient_id) {
+                  const isDup = await dataService.checkDuplicateDelivery(editItem.patient_id, editItem.product_id);
+                   // In edit mode, we just warn via toast if strict, but here we assume if they are editing they know what they are doing.
+                   if (isDup) showToast("Warning: This edit creates a duplication conflict, but saved.", "info");
+              }
+
               await dataService.updateDelivery(editItem.id, {
                   delivery_date: editItem.delivery_date,
                   rx_date: editItem.rx_date,
                   educator_name: editItem.educator_name,
-                  notes: editItem.notes
+                  notes: editItem.notes,
+                  hcp_id: editItem.hcp_id,
+                  custody_id: editItem.custody_id,
+                  product_id: editItem.product_id
               });
           } else if (editType === 'hcps') {
               await dataService.updateHCP(editItem.id, {
@@ -445,7 +461,8 @@ const App: React.FC = () => {
           } else if (editType === 'locations') {
               await dataService.updateCustody(editItem.id, {
                   name: editItem.name,
-                  current_stock: Number(editItem.current_stock)
+                  current_stock: Number(editItem.current_stock),
+                  created_at: editItem.created_at // Assuming creation date is editable like new form
               });
           } else if (editType === 'stock') {
               await dataService.updateStockTransaction(editItem.id, {
@@ -461,6 +478,39 @@ const App: React.FC = () => {
       } catch (err: any) {
           showToast("Update failed: " + err.message, "error");
       }
+  };
+
+  const resolveSourceText = (text: string) => {
+      if (!text) return '-';
+      let resolved = text;
+      // Resolve Custody IDs
+      custodies.forEach(c => {
+          if (resolved.includes(c.id)) resolved = resolved.replace(c.id, c.name);
+      });
+      // Resolve HCP IDs
+      hcps.forEach(h => {
+          if (resolved.includes(h.id)) resolved = resolved.replace(h.id, h.full_name);
+      });
+      // Resolve Patient IDs
+      patients.forEach(p => {
+          if (resolved.includes(p.id)) resolved = resolved.replace(p.id, p.full_name);
+      });
+      // Resolve User ID
+      if (user && resolved.includes(user.id)) resolved = resolved.replace(user.id, userProfile?.full_name || 'Me');
+      
+      return resolved;
+  };
+
+  const filterData = (data: any[]) => {
+      if (!searchTerm) return data;
+      const lower = searchTerm.toLowerCase();
+      return data.filter(item => {
+          return Object.values(item).some(val => 
+              typeof val === 'string' && val.toLowerCase().includes(lower)
+          ) || (item.patient?.full_name?.toLowerCase().includes(lower))
+            || (item.hcp?.full_name?.toLowerCase().includes(lower))
+            || (item.custody?.name?.toLowerCase().includes(lower));
+      });
   };
 
   const LockedState = ({ title, description }: { title: string, description: string }) => (
@@ -496,8 +546,8 @@ const App: React.FC = () => {
       {/* GENERIC EDIT MODAL */}
       {editItem && editType && (
          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); }}>
-             <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                 <div className="bg-black p-4 flex items-center justify-between">
+             <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                 <div className="bg-black p-4 flex items-center justify-between sticky top-0 z-10">
                      <div className="flex items-center gap-3">
                         <Pencil className="w-5 h-5 text-[#FFC600]" />
                         <h3 className="text-white font-bold">Edit Record</h3>
@@ -508,19 +558,25 @@ const App: React.FC = () => {
                     {editType === 'deliveries' && (
                         <>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Delivery Date</label><input type="date" className="w-full border p-2" value={editItem.delivery_date} onChange={e => setEditItem({...editItem, delivery_date: e.target.value})} /></div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Name</label><input type="text" className="w-full border p-2" value={editItem.educator_name} onChange={e => setEditItem({...editItem, educator_name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Prescriber (HCP)</label><select className="w-full border p-2 bg-white" value={editItem.hcp_id} onChange={e => setEditItem({...editItem, hcp_id: e.target.value})}>{hcps.map(h => <option key={h.id} value={h.id}>{h.full_name}</option>)}</select></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label><select className="w-full border p-2 bg-white" value={editItem.product_id} onChange={e => setEditItem({...editItem, product_id: e.target.value})}>{PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source Custody</label><select className="w-full border p-2 bg-white" value={editItem.custody_id} onChange={e => setEditItem({...editItem, custody_id: e.target.value})}>{custodies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rx Date</label><input type="date" className="w-full border p-2" value={editItem.rx_date || ''} onChange={e => setEditItem({...editItem, rx_date: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Name</label><input type="text" className="w-full border p-2" value={editItem.educator_name} onChange={e => setEditItem({...editItem, educator_name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Notes</label><textarea className="w-full border p-2" rows={3} value={editItem.notes || ''} onChange={e => setEditItem({...editItem, notes: e.target.value})} /></div>
                         </>
                     )}
                     {editType === 'hcps' && (
                         <>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Doctor Name</label><input type="text" className="w-full border p-2" value={editItem.full_name} onChange={e => setEditItem({...editItem, full_name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Specialty</label><input type="text" className="w-full border p-2" value={editItem.specialty} onChange={e => setEditItem({...editItem, specialty: e.target.value})} /></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hospital</label><input type="text" className="w-full border p-2" value={editItem.hospital} onChange={e => setEditItem({...editItem, hospital: e.target.value})} /></div>
                         </>
                     )}
                     {editType === 'locations' && (
                         <>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Location Name</label><input type="text" className="w-full border p-2" value={editItem.name} onChange={e => setEditItem({...editItem, name: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Registered Date</label><input type="date" className="w-full border p-2" value={editItem.created_at ? editItem.created_at.split('T')[0] : ''} onChange={e => setEditItem({...editItem, created_at: e.target.value})} /></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Stock (Override)</label><input type="number" className="w-full border p-2 font-bold text-red-600" value={editItem.current_stock} onChange={e => setEditItem({...editItem, current_stock: e.target.value})} /></div>
                         </>
                     )}
@@ -528,7 +584,7 @@ const App: React.FC = () => {
                         <>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Date</label><input type="date" className="w-full border p-2" value={editItem.transaction_date} onChange={e => setEditItem({...editItem, transaction_date: e.target.value})} /></div>
                              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label><input type="number" className="w-full border p-2" value={editItem.quantity} onChange={e => setEditItem({...editItem, quantity: e.target.value})} /></div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source / Notes</label><input type="text" className="w-full border p-2" value={editItem.source} onChange={e => setEditItem({...editItem, source: e.target.value})} /></div>
+                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source / Reason</label><input type="text" className="w-full border p-2" value={editItem.source} onChange={e => setEditItem({...editItem, source: e.target.value})} /></div>
                         </>
                     )}
                     <button type="submit" className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Save Changes</button>
@@ -682,6 +738,7 @@ const App: React.FC = () => {
                                             <span>{formatDateFriendly(t.transaction_date)}</span>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
+                                                <button onClick={() => openEditModal('tx', t)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-blue-400 transition-opacity"><Pencil className="w-3 h-3" /></button>
                                                 <button onClick={() => handleDeleteItem('tx', t.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-500 transition-opacity"><Trash2 className="w-3 h-3" /></button>
                                             </div>
                                         </div>
@@ -721,6 +778,7 @@ const App: React.FC = () => {
                                         <select className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.toCustodyId} onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})} required><option value="">-- Select Clinic --</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name}</option>))}</select>
                                     </div>
                                     <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity (Pens)</label><input type="number" min="1" className="w-full border p-2 bg-slate-50 text-sm font-bold" value={transferForm.quantity} onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})} /></div>
+                                    <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Supply Date</label><input type="date" className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.date} onChange={e => setTransferForm({...transferForm, date: e.target.value})} /></div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Source of Stock</label>
                                         <div className="flex flex-col gap-2"><label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer"><input type="radio" name="sourceType" checked={transferForm.sourceType === 'rep'} onChange={() => setTransferForm({...transferForm, sourceType: 'rep', educatorName: ''})} /><span className="text-xs font-bold">My Inventory (Rep)</span><span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span></label></div>
@@ -752,7 +810,18 @@ const App: React.FC = () => {
                       )}
                       {foundPatient && (
                           <>
-                             {duplicateWarning && (<div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 animate-in slide-in-from-top-2"><div className="flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-red-600 shrink-0" /><div><p className="font-bold text-red-800 uppercase text-xs">Duplication Alert</p><p className="text-sm text-red-700 mb-1">This patient has already received a pen recently.</p><p className="text-xs text-red-600">Please verify: Is this a replacement? Or a different product assignment?</p></div></div></div>)}
+                             {duplicateWarning && (
+                                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4 animate-in slide-in-from-top-2">
+                                    <div className="flex items-start gap-3">
+                                        <Info className="w-5 h-5 text-yellow-600 shrink-0" />
+                                        <div>
+                                            <p className="font-bold text-yellow-800 uppercase text-xs">Duplication Notice</p>
+                                            <p className="text-sm text-yellow-700 mb-1">This patient has already received this product recently.</p>
+                                            <p className="text-xs text-yellow-600">You may proceed, but please verify this is a valid resupply.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                             )}
                              <button onClick={() => setStep(2)} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">{duplicateWarning ? 'Acknowledge & Continue' : 'Next: Delivery Details'} <ArrowRight className="w-4 h-4" /></button>
                           </>
                       )}
@@ -764,8 +833,8 @@ const App: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Delivery Date</label><input type="date" required className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} /></div><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">From Custody (Source) <span className="text-red-500">*</span></label><button onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> Add New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedCustody} onChange={e => setSelectedCustody(e.target.value)}><option value="">-- Select Source --</option>{custodies.filter(c => c.type === 'rep').map(c => (<option key={c.id} value={c.id}>My Inventory (Rep)</option>))}<option disabled>──────────</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name} (Clinic)</option>))}</select></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><div className="flex justify-between items-end mb-1"><label className="block text-sm font-bold text-slate-800">Prescribing Doctor (Rx)</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div><select className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select Doctor --</option>{hcps.map(h => (<option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>))}</select></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Rx Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-800 mb-1">Reported Educator Name <span className="text-red-500">*</span></label><input type="text" placeholder="Name" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-list-delivery" /><datalist id="educator-list-delivery">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist><div className="flex flex-wrap gap-1 mt-1">{educatorSuggestions.slice(0, 6).map(s => (<button key={s} onClick={() => setEducatorName(s)} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded hover:bg-[#FFC600]">{s}</button>))}</div></div><div><label className="block text-sm font-bold text-slate-800 mb-1">Data Submission Date</label><input type="date" className="w-full border border-slate-300 p-3 bg-white focus:border-[#FFC600] outline-none" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div></div>
-                          <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => setSelectedProduct(p.id)} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
-                          <button onClick={handleSubmitDelivery} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>{duplicateWarning ? 'Confirm Duplicate Entry' : 'Confirm Delivery'}</button>
+                          <div><label className="block text-sm font-bold text-slate-800 mb-2">Assign Insulin Product</label><div className="grid grid-cols-1 gap-2">{PRODUCTS.map(p => (<button key={p.id} onClick={() => { setSelectedProduct(p.id); if(foundPatient) dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }} className={`p-3 text-left border-2 transition-all ${selectedProduct === p.id ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-100 hover:border-slate-300'}`}><div className="font-bold text-sm">{p.name}</div><div className="text-xs text-slate-500 uppercase">{p.type}</div></button>))}</div></div>
+                          <button onClick={handleSubmitDelivery} className={`w-full py-4 font-bold uppercase tracking-wide shadow-lg transition-all ${duplicateWarning ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-black text-[#FFC600] hover:bg-slate-800'}`}>{duplicateWarning ? 'Proceed with Duplicate Entry' : 'Confirm Delivery'}</button>
                       </div>
                       </div>
                   </div>
@@ -778,20 +847,32 @@ const App: React.FC = () => {
               <LockedState title="Database Access Locked" description="Full system records are strictly confidential and available only to authorized admin." />
             ) : (
               <div className="space-y-6">
-                  <div className="flex gap-4 border-b border-slate-200 pb-2 overflow-x-auto">
-                      <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Transactions</button>
-                      <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Doctors (HCPs)</button>
-                      <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Locations</button>
-                      <button onClick={() => setDbView('stock')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Stock History</button>
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-4">
+                      <div className="flex gap-4 border-b border-slate-200 pb-2 overflow-x-auto w-full md:w-auto">
+                          <button onClick={() => setDbView('deliveries')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Transactions</button>
+                          <button onClick={() => setDbView('hcps')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Doctors (HCPs)</button>
+                          <button onClick={() => setDbView('locations')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'locations' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Locations</button>
+                          <button onClick={() => setDbView('stock')} className={`pb-2 font-bold text-sm uppercase tracking-wide transition-colors whitespace-nowrap ${dbView === 'stock' ? 'border-b-4 border-[#FFC600] text-black' : 'text-slate-400 hover:text-black'}`}>Stock History</button>
+                      </div>
+                      <div className="relative w-full md:w-64">
+                          <input 
+                              type="text" 
+                              placeholder="Search Database..." 
+                              value={searchTerm}
+                              onChange={(e) => setSearchTerm(e.target.value)}
+                              className="w-full pl-10 pr-4 py-2 border border-slate-200 text-sm focus:border-[#FFC600] outline-none bg-white"
+                          />
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      </div>
                   </div>
 
                   {dbView === 'deliveries' && (
                     <div className="bg-white shadow-sm border border-slate-200 animate-in fade-in duration-500 overflow-x-auto">
                         <table className="w-full text-left min-w-[800px]">
                         <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Patient</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Product</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Prescriber</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Educator</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                        <tbody className="divide-y divide-slate-100">{deliveries.map(d => (<tr key={d.id} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td><td className="px-6 py-4"><div className="font-bold text-slate-800">{d.patient?.full_name}</div><div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div></td><td className="px-6 py-4"><span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">{getProductName(d.product_id)}</span></td><td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}{d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}</td><td className="px-6 py-4 text-sm text-slate-600">{d.educator_name || '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
+                        <tbody className="divide-y divide-slate-100">{filterData(deliveries).map(d => (<tr key={d.id} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-mono text-sm text-slate-600">{formatDateFriendly(d.delivery_date)}</td><td className="px-6 py-4"><div className="font-bold text-slate-800">{d.patient?.full_name}</div><div className="text-xs text-slate-400 font-mono">{d.patient?.national_id}</div></td><td className="px-6 py-4"><span className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">{getProductName(d.product_id)}</span></td><td className="px-6 py-4 text-sm text-slate-600">{d.hcp?.full_name}{d.rx_date && <div className="text-[10px] text-slate-400">Rx: {formatDateFriendly(d.rx_date)}</div>}</td><td className="px-6 py-4 text-sm text-slate-600">{d.educator_name || '-'}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('deliveries', d)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                         </table>
-                        {deliveries.length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
+                        {filterData(deliveries).length === 0 && <div className="p-10 text-center text-slate-400">No records found</div>}
                     </div>
                   )}
 
@@ -801,7 +882,7 @@ const App: React.FC = () => {
                            <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Doctor Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Specialty</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Hospital / Clinic</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{hcps.map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4 text-slate-600">{h.specialty || '-'}</td><td className="px-6 py-4 text-slate-600">{h.hospital}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
+                                    <tbody className="divide-y divide-slate-100">{filterData(hcps).map(h => (<tr key={h.id}><td className="px-6 py-4 font-bold text-slate-800">{h.full_name}</td><td className="px-6 py-4 text-slate-600">{h.specialty || '-'}</td><td className="px-6 py-4 text-slate-600">{h.hospital}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('hcps', h)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                                 </table>
                            </div>
                        </div>
@@ -813,7 +894,7 @@ const App: React.FC = () => {
                            <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Location Name</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Type</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Stock Level</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Registered Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{custodies.map(c => (<tr key={c.id}><td className="px-6 py-4 font-bold text-slate-800">{c.name}</td><td className="px-6 py-4 uppercase text-xs font-bold text-slate-500">{c.type}</td><td className="px-6 py-4 font-mono">{c.current_stock}</td><td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
+                                    <tbody className="divide-y divide-slate-100">{filterData(custodies).map(c => (<tr key={c.id}><td className="px-6 py-4 font-bold text-slate-800">{c.name}</td><td className="px-6 py-4 uppercase text-xs font-bold text-slate-500">{c.type}</td><td className="px-6 py-4 font-mono">{c.current_stock}</td><td className="px-6 py-4 text-slate-600">{formatDateFriendly(c.created_at)}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('locations', c)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>))}</tbody>
                                 </table>
                            </div>
                        </div>
@@ -824,10 +905,10 @@ const App: React.FC = () => {
                            <div className="bg-white shadow-sm border border-slate-200 overflow-x-auto">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Date</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Custody</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Change</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500">Source / Reason</th><th className="px-6 py-4 font-bold text-xs uppercase text-slate-500 w-24">Actions</th></tr></thead>
-                                    <tbody className="divide-y divide-slate-100">{stockTransactions.map(s => { const custody = custodies.find(c => c.id === s.custody_id); return (<tr key={s.id}><td className="px-6 py-4 text-slate-600 font-mono text-sm">{formatDateFriendly(s.transaction_date)}</td><td className="px-6 py-4 font-bold text-slate-800">{custody?.name || s.custody_id}</td><td className={`px-6 py-4 font-mono font-bold ${s.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{s.quantity > 0 ? '+' : ''}{s.quantity}</td><td className="px-6 py-4 text-slate-600 text-sm">{s.source}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('stock', s)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('stock', s.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>);})}</tbody>
+                                    <tbody className="divide-y divide-slate-100">{filterData(stockTransactions).map(s => { const custody = custodies.find(c => c.id === s.custody_id); return (<tr key={s.id}><td className="px-6 py-4 text-slate-600 font-mono text-sm">{formatDateFriendly(s.transaction_date)}</td><td className="px-6 py-4 font-bold text-slate-800">{custody?.name || s.custody_id}</td><td className={`px-6 py-4 font-mono font-bold ${s.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{s.quantity > 0 ? '+' : ''}{s.quantity}</td><td className="px-6 py-4 text-slate-600 text-sm">{resolveSourceText(s.source)}</td><td className="px-6 py-4 flex gap-2"><button onClick={() => openEditModal('stock', s)} className="text-slate-400 hover:text-blue-600"><Pencil className="w-4 h-4"/></button><button onClick={() => handleDeleteItem('stock', s.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button></td></tr>);})}</tbody>
                                 </table>
                            </div>
-                           {stockTransactions.length === 0 && <div className="text-center text-slate-400 p-8">No stock history available</div>}
+                           {filterData(stockTransactions).length === 0 && <div className="text-center text-slate-400 p-8">No stock history available</div>}
                        </div>
                   )}
               </div>
