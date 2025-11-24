@@ -12,7 +12,6 @@ import {
   Users, 
   Package, 
   Activity,
-  Hexagon,
   Sparkles,
   AlertTriangle,
   CheckCircle,
@@ -862,7 +861,7 @@ const App: React.FC = () => {
       {installPrompt && (
           <div className="bg-black text-white p-3 flex justify-between items-center z-50 sticky top-0 shadow-lg">
               <div className="flex items-center gap-3">
-                  <div className="bg-[#FFC600] p-1"><Hexagon className="w-4 h-4 text-black" /></div>
+                  <img src="/icon.svg" className="w-8 h-8 rounded border border-slate-700" alt="Icon" />
                   <div className="text-xs">
                       <p className="font-bold text-[#FFC600]">INSTALL S.P.I.N</p>
                       <p className="text-slate-400">Add Supply Network to your home screen.</p>
@@ -999,9 +998,7 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center gap-3">
-              <div className="bg-[#FFC600] p-1.5 transform rotate-3">
-                <Hexagon className="w-6 h-6 text-black fill-current transform -rotate-3" />
-              </div>
+              <img src="/icon.svg" className="w-10 h-10 rounded-lg border-2 border-[#FFC600]" alt="SPIN Logo" />
               <div className="flex flex-col">
                 <span className="font-black text-2xl leading-none tracking-tighter">S.P.I.N</span>
                 <span className="text-[10px] font-bold text-[#FFC600] uppercase tracking-widest">Supply Insulin Pen Network</span>
@@ -1266,7 +1263,7 @@ const App: React.FC = () => {
                         </div>
                     )}
                 </div>
-            )}
+             )
           )}
            {activeTab === 'database' && (
              !user ? (
@@ -1486,7 +1483,7 @@ const App: React.FC = () => {
       <footer className="bg-white border-t border-slate-200 py-0.5 shrink-0 z-40 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] relative">
         <div className="max-w-7xl mx-auto px-4 flex justify-between items-center h-6">
             <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-2">
-                <Hexagon className="w-3 h-3 text-[#FFC600] fill-current" />
+                <img src="/icon.svg" className="w-4 h-4 rounded-sm border border-slate-300" alt="Logo" />
                 <span>SPIN v{METADATA.version}</span>
             </div>
             <div className="text-[10px] text-slate-400">

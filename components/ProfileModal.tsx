@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { X, User, Shield, Trash2, AlertTriangle, Loader2, Hexagon } from 'lucide-react';
+import { X, User, Shield, Trash2, Loader2 } from 'lucide-react';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -72,9 +72,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, use
         {/* Header */}
         <div className="bg-black p-6 flex justify-between items-center">
             <div className="flex items-center gap-3">
-                 <div className="bg-[#FFC600] p-1">
-                    <Hexagon className="w-4 h-4 text-black fill-current" />
-                 </div>
+                 <img src="/icon.svg" className="w-8 h-8 rounded border border-slate-800" alt="Logo" />
                  <h3 className="text-white font-bold text-lg uppercase tracking-wider">User Profile</h3>
             </div>
             <button onClick={onClose} className="text-slate-400 hover:text-white">

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { Loader2, AlertCircle, Hexagon, X, CheckCircle2, Eye, EyeOff, User, Briefcase, Network } from 'lucide-react';
+import { Loader2, AlertCircle, X, CheckCircle2, Eye, EyeOff, User, Briefcase, Network } from 'lucide-react';
 import { UserRole } from '../types';
 
 interface AuthProps {
@@ -210,8 +210,9 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
 
         {/* Header */}
         <div className="bg-black p-8 text-center relative overflow-hidden">
-          <div className="mx-auto bg-[#FFC600] w-12 h-12 flex items-center justify-center mb-3 transform rotate-45">
-            <Hexagon className="text-black w-8 h-8 -rotate-45 fill-current" />
+          <div className="mx-auto w-16 h-16 mb-4 relative">
+             <div className="absolute inset-0 bg-[#FFC600] blur-xl opacity-20 rounded-full"></div>
+             <img src="/icon.svg" alt="Logo" className="w-full h-full relative z-10" />
           </div>
           <h2 className="text-3xl font-black text-white tracking-tighter">SPIN ACCESS</h2>
           <p className="text-[#FFC600] mt-2 text-xs font-bold tracking-widest uppercase">

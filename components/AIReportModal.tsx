@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { Delivery } from '../types';
 import { formatDateFriendly } from '../utils/time';
-import { Sparkles, X, Copy, Check, Hexagon } from 'lucide-react';
+import { Sparkles, X, Copy, Check } from 'lucide-react';
 
 interface AIReportModalProps {
   isOpen: boolean;
@@ -77,9 +77,7 @@ export const AIReportModal: React.FC<AIReportModalProps> = ({ isOpen, onClose, d
         {/* Header */}
         <div className="bg-black p-5 flex justify-between items-center">
           <div className="flex items-center gap-3 text-white">
-            <div className="bg-[#FFC600] p-1">
-                <Hexagon className="w-5 h-5 text-black fill-current" />
-            </div>
+            <img src="/icon.svg" className="w-8 h-8 rounded border border-slate-800" alt="Logo" />
             <h3 className="font-bold text-xl tracking-tight">SPIN Intelligence</h3>
           </div>
           <button onClick={onClose} className="text-white/60 hover:text-[#FFC600] transition-colors">
