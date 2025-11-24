@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Loader2, AlertCircle, Hexagon, X, CheckCircle2, Eye, EyeOff, User, Briefcase, Network } from 'lucide-react';
@@ -64,6 +63,13 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email,
                 password,
+                options: {
+                    data: {
+                        full_name: fullName,
+                        employee_id: employeeId,
+                        role: isAdminEmail ? 'admin' : role,
+                    }
+                }
             });
             if (authError) throw authError;
             if (!authData.user) throw new Error("Registration failed");
@@ -75,7 +81,9 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             const finalAccess = isAdminEmail ? 'yes' : 'pending';
 
             // 3. Create Profile with Role
-            const { error: profileError } = await supabase.from('profiles').insert([
+            // We use upsert to handle cases where a trigger might have created a partial profile
+            // or if the user is re-registering.
+            const { error: profileError } = await supabase.from('profiles').upsert([
                 {
                     id: authData.user.id,
                     full_name: fullName,
@@ -126,7 +134,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
 
                 // Recovery: If Admin logs in but has no profile (rare case), create it
                 if (isAdminEmail && !profile) {
-                     await supabase.from('profiles').insert([{
+                     await supabase.from('profiles').upsert([{
                          id: data.user.id,
                          full_name: 'Super Admin',
                          employee_id: 'ADMIN-001',
