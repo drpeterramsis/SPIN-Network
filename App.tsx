@@ -49,8 +49,8 @@ import { ProfileModal } from './components/ProfileModal';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "SPIN v2.0.023",
-  version: "2.0.023"
+  name: "SPIN v2.0.024",
+  version: "2.0.024"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin';
@@ -172,8 +172,22 @@ const App: React.FC = () => {
       if (configured && supabase) {
         const { data: { session } } = await supabase.auth.getSession();
         setUser(session?.user ?? null);
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-          setUser(session?.user ?? null);
+        
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+          const currentUser = session?.user ?? null;
+          setUser(currentUser);
+          
+          // Reset state on logout to prevent white screen / stale data
+          if (event === 'SIGNED_OUT' || !currentUser) {
+              setActiveTab('dashboard');
+              setDeliveries([]);
+              setHcps([]);
+              setCustodies([]);
+              setStockTransactions([]);
+              setAllProfiles([]);
+              setUserProfile(null);
+              setShowProfileModal(false);
+          }
         });
         setAuthLoading(false);
         return () => subscription.unsubscribe();
@@ -256,13 +270,6 @@ const App: React.FC = () => {
   useEffect(() => {
     if (user) {
         loadData();
-    } else {
-        setDeliveries([]);
-        setHcps([]);
-        setCustodies([]);
-        setStockTransactions([]);
-        setUserProfile(null);
-        setAllProfiles([]);
     }
   }, [user, loadData]);
 
@@ -973,7 +980,7 @@ const App: React.FC = () => {
                     </div>
                     <button onClick={() => setShowAIModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded transition-colors border border-slate-700 text-[#FFC600]"><Sparkles className="w-3 h-3" /> Intelligence</button>
                     <div className="h-8 w-px bg-slate-800 mx-1"></div>
-                    <button onClick={async () => { await supabase?.auth.signOut(); setUser(null); }} className="text-slate-400 hover:text-white transition-colors flex items-center gap-2" title="Logout"><LogOut className="w-5 h-5" /></button>
+                    <button onClick={() => supabase?.auth.signOut()} className="text-slate-400 hover:text-white transition-colors flex items-center gap-2" title="Logout"><LogOut className="w-5 h-5" /></button>
                   </>
               ) : (
                   <button onClick={() => setShowLoginModal(true)} className="flex items-center gap-2 bg-[#FFC600] hover:bg-yellow-400 text-black px-4 py-2 font-bold uppercase text-xs tracking-wider transition-colors"><LogIn className="w-4 h-4" /> Staff Login</button>

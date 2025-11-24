@@ -56,6 +56,9 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
     try {
         if (!supabase) throw new Error("Supabase client not initialized");
 
+        // SPECIAL HANDLING FOR ADMIN REGISTRATION
+        const isAdminEmail = email.toLowerCase() === 'admin@spin.com';
+
         if (isSignUp) {
             // 1. Sign Up
             const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -65,29 +68,47 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             if (authError) throw authError;
             if (!authData.user) throw new Error("Registration failed");
 
-            // 2. Create Profile with Role
+            // 2. Determine Role & Access
+            // If it's the hardcoded admin email, force Admin role and Yes access.
+            // Otherwise, use the selected role and Pending access.
+            const finalRole = isAdminEmail ? 'admin' : role;
+            const finalAccess = isAdminEmail ? 'yes' : 'pending';
+
+            // 3. Create Profile with Role
             const { error: profileError } = await supabase.from('profiles').insert([
                 {
                     id: authData.user.id,
                     full_name: fullName,
                     employee_id: employeeId,
                     corporate_email: email,
-                    role: role, // 'mr', 'dm', or 'lm'
-                    access: 'no' // Default to no access
+                    role: finalRole,
+                    access: finalAccess
                 }
             ]);
 
             if (profileError) {
                 console.error("Profile creation error:", profileError);
-                // Try to fallback if profile creation fails but auth succeeds (rare)
+                // Note: If user already exists in Auth but not in Profile, this might fail or need upsert.
+                // We use insert here. If it fails, we might need to check why.
             }
 
-            setSuccessMsg("Registration successful. Please wait for admin approval (Access Status: Pending).");
+            if (isAdminEmail) {
+                setSuccessMsg("Admin account created and auto-approved. Please Login.");
+            } else {
+                setSuccessMsg("Registration successful. Please wait for admin approval (Status: Pending).");
+            }
+            
             setIsSignUp(false); 
         } else {
             // 1. Login
             const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-            if (error) throw error;
+            
+            if (error) {
+                if (isAdminEmail && (error.message.includes('Invalid login') || error.message.includes('Email not confirmed'))) {
+                   throw new Error("Admin account not found or password incorrect. If this is your first time, please click 'Register New Account' to initialize the Admin user.");
+                }
+                throw error;
+            }
             
             if (data.user) {
                 // 2. Check Access
@@ -101,9 +122,8 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                      throw profileFetchError;
                 }
 
-                // Superadmin bypass
-                if (data.user.email === 'admin@spin.com' && !profile) {
-                     // Create superadmin profile if missing
+                // Recovery: If Admin logs in but has no profile (rare case), create it
+                if (isAdminEmail && !profile) {
                      await supabase.from('profiles').insert([{
                          id: data.user.id,
                          full_name: 'Super Admin',
@@ -112,11 +132,12 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                          role: 'admin',
                          access: 'yes'
                      }]);
+                     // Proceed to login
                 } else if (profile) {
                     const hasAccess = profile.access === 'yes' || profile.role === 'admin';
                     if (!hasAccess) {
                         await supabase.auth.signOut();
-                        throw new Error("Access denied. Your account has not been approved by an administrator yet.");
+                        throw new Error("Access denied. Your account is pending approval by an administrator.");
                     }
                 }
 
@@ -137,6 +158,12 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
       setSuccessMsg('');
       setShowPassword(false);
       setRole('mr'); // Reset to default
+      
+      // Auto-fill for admin convenience if typing admin email
+      if (email === 'admin@spin.com') {
+         setFullName('Super Admin');
+         setEmployeeId('ADMIN-001');
+      }
   };
 
   return (
@@ -207,35 +234,38 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                         placeholder="EMP-12345"
                     />
                     </div>
-                    <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Role</label>
-                    <div className="grid grid-cols-1 gap-2">
-                        <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'mr' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                            <input type="radio" name="role" value="mr" checked={role === 'mr'} onChange={() => setRole('mr')} className="accent-black w-4 h-4" />
-                            <div className="flex-1">
-                                <span className="block text-sm font-bold text-slate-900">Medical Representative (MR)</span>
-                                <span className="text-xs text-slate-500">Distribution & Delivery</span>
-                            </div>
-                            <Briefcase className="w-4 h-4 text-slate-400" />
-                        </label>
-                        <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'dm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                            <input type="radio" name="role" value="dm" checked={role === 'dm'} onChange={() => setRole('dm')} className="accent-black w-4 h-4" />
-                            <div className="flex-1">
-                                <span className="block text-sm font-bold text-slate-900">District Manager (DM)</span>
-                                <span className="text-xs text-slate-500">Manages MR Team</span>
-                            </div>
-                            <User className="w-4 h-4 text-slate-400" />
-                        </label>
-                         <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'lm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                            <input type="radio" name="role" value="lm" checked={role === 'lm'} onChange={() => setRole('lm')} className="accent-black w-4 h-4" />
-                            <div className="flex-1">
-                                <span className="block text-sm font-bold text-slate-900">Line Manager (LM)</span>
-                                <span className="text-xs text-slate-500">Regional Oversight</span>
-                            </div>
-                            <Network className="w-4 h-4 text-slate-400" />
-                        </label>
-                    </div>
-                    </div>
+                    
+                    {email !== 'admin@spin.com' && (
+                        <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Role</label>
+                        <div className="grid grid-cols-1 gap-2">
+                            <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'mr' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                <input type="radio" name="role" value="mr" checked={role === 'mr'} onChange={() => setRole('mr')} className="accent-black w-4 h-4" />
+                                <div className="flex-1">
+                                    <span className="block text-sm font-bold text-slate-900">Medical Representative (MR)</span>
+                                    <span className="text-xs text-slate-500">Distribution & Delivery</span>
+                                </div>
+                                <Briefcase className="w-4 h-4 text-slate-400" />
+                            </label>
+                            <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'dm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                <input type="radio" name="role" value="dm" checked={role === 'dm'} onChange={() => setRole('dm')} className="accent-black w-4 h-4" />
+                                <div className="flex-1">
+                                    <span className="block text-sm font-bold text-slate-900">District Manager (DM)</span>
+                                    <span className="text-xs text-slate-500">Manages MR Team</span>
+                                </div>
+                                <User className="w-4 h-4 text-slate-400" />
+                            </label>
+                             <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'lm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                <input type="radio" name="role" value="lm" checked={role === 'lm'} onChange={() => setRole('lm')} className="accent-black w-4 h-4" />
+                                <div className="flex-1">
+                                    <span className="block text-sm font-bold text-slate-900">Line Manager (LM)</span>
+                                    <span className="text-xs text-slate-500">Regional Oversight</span>
+                                </div>
+                                <Network className="w-4 h-4 text-slate-400" />
+                            </label>
+                        </div>
+                        </div>
+                    )}
                 </>
             )}
 
