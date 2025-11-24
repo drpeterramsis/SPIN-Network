@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Auth } from './components/Auth';
 import { AdminPanel } from './components/AdminPanel';
 import { dataService } from './services/dataService';
@@ -43,15 +44,19 @@ import {
   Loader2,
   RotateCcw,
   Shield,
-  FileText
+  FileText,
+  PieChart,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
+import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "SPIN v2.0.027",
-  version: "2.0.027"
+  name: "SPIN v2.0.028",
+  version: "2.0.028"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin';
@@ -98,6 +103,11 @@ const App: React.FC = () => {
 
   const [showAIModal, setShowAIModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+  
+  // Dashboard Expand States
+  const [expandPrescribers, setExpandPrescribers] = useState(false);
+  const [expandDeliveries, setExpandDeliveries] = useState(false);
 
   // Computed Suggestions
   const [hcpSpecialties, setHcpSpecialties] = useState<string[]>([]);
@@ -315,6 +325,38 @@ const App: React.FC = () => {
 
   const visibleDeliveries = getVisibleDeliveries();
   const visibleStock = getVisibleStock();
+
+  // --- ANALYTICS CALCULATIONS ---
+  const uniquePrescribersCount = useMemo(() => {
+      return new Set(visibleDeliveries.map(d => d.hcp_id)).size;
+  }, [visibleDeliveries]);
+
+  const topPrescribers = useMemo(() => {
+      const counts: Record<string, number> = {};
+      visibleDeliveries.forEach(d => {
+          counts[d.hcp_id] = (counts[d.hcp_id] || 0) + d.quantity;
+      });
+      return Object.entries(counts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([id, count]) => ({
+              name: hcps.find(h => h.id === id)?.full_name || 'Unknown',
+              count
+          }));
+  }, [visibleDeliveries, hcps]);
+
+  const productBreakdown = useMemo(() => {
+      const total = visibleDeliveries.length;
+      if (total === 0) return [];
+      const counts: Record<string, number> = {};
+      visibleDeliveries.forEach(d => {
+          counts[d.product_id] = (counts[d.product_id] || 0) + d.quantity;
+      });
+      return Object.entries(counts).map(([id, count]) => ({
+          name: PRODUCTS.find(p => p.id === id)?.name || id,
+          percentage: Math.round((count / total) * 100)
+      }));
+  }, [visibleDeliveries]);
 
   useEffect(() => {
       if (step === 2 && !selectedCustody && repCustody) {
@@ -817,6 +859,7 @@ const App: React.FC = () => {
 
       <Auth isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} onLogin={setUser} />
       {user && <ProfileModal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} user={user} onLogout={() => { setUser(null); setShowProfileModal(false); }} />}
+      {user && <AnalyticsDashboard isOpen={showAnalyticsModal} onClose={() => setShowAnalyticsModal(false)} deliveries={visibleDeliveries} hcps={hcps} role={userProfile?.role || 'mr'} />}
 
       {editItem && editType && (
          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); setEditPatientDetails(null); }}>
@@ -1035,17 +1078,88 @@ const App: React.FC = () => {
                   </div>
               ) : (
                   <>
-                      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500"><h1 className="text-2xl font-bold text-slate-900">Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}</h1><p className="text-slate-500 text-sm">Here is your daily distribution overview.</p></div>
+                      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500 flex justify-between items-end">
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-900">Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}</h1>
+                            <p className="text-slate-500 text-sm">Here is your daily distribution overview.</p>
+                        </div>
+                        <button onClick={() => setShowAnalyticsModal(true)} className="hidden md:flex items-center gap-2 bg-[#FFC600] hover:bg-yellow-400 text-black px-5 py-2.5 font-bold uppercase text-xs tracking-wider transition-colors shadow-lg">
+                            <BarChart3 className="w-4 h-4" /> Full Analytics
+                        </button>
+                      </div>
+                      
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                         
-                        {/* Conditional Dashboard Cards based on Permission */}
+                        {/* MY INVENTORY CARD */}
                         {canManageStock && (
                             <div onClick={() => { setActiveTab('custody'); }} className="bg-white p-6 shadow-sm border-l-4 border-blue-500 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 cursor-pointer hover:bg-blue-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">My Inventory</p><h3 className="text-3xl font-black text-slate-900">{repCustody?.current_stock || 0}</h3></div><div className="bg-blue-50 p-3 rounded-full group-hover:bg-blue-200 transition-colors"><Briefcase className="w-6 h-6 text-blue-600 group-hover:text-black" /></div></div>
                         )}
 
-                        <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-[#FFC600] flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-75 cursor-pointer hover:bg-yellow-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{visibleDeliveries.length}</h3></div><div className="bg-yellow-50 p-3 rounded-full group-hover:bg-[#FFC600] transition-colors"><Package className="w-6 h-6 text-[#FFC600] group-hover:text-black" /></div></div>
-                        <div onClick={() => { setActiveTab('database'); setDbView('deliveries'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-100 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Patients Reached</p><h3 className="text-3xl font-black text-slate-900">{new Set(visibleDeliveries.map(d => d.patient_id)).size}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Users className="w-6 h-6 text-slate-900" /></div></div>
-                        <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Custodies</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
+                        {/* TOTAL DELIVERED - UPDATED */}
+                        <div className="bg-white shadow-sm border-l-4 border-[#FFC600] animate-in slide-in-from-bottom-4 duration-500 delay-75 group flex flex-col relative overflow-hidden">
+                             <div className="p-6 cursor-pointer hover:bg-yellow-50 transition-colors" onClick={() => setExpandDeliveries(!expandDeliveries)}>
+                                <div className="flex items-center justify-between mb-2">
+                                    <div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{visibleDeliveries.length}</h3></div>
+                                    <div className="bg-yellow-50 p-3 rounded-full group-hover:bg-[#FFC600] transition-colors"><Package className="w-6 h-6 text-[#FFC600] group-hover:text-black" /></div>
+                                </div>
+                                <div className="flex items-center gap-1 text-slate-400 text-[10px] font-bold uppercase">
+                                    <span>{expandDeliveries ? 'Hide' : 'Show'} Breakdown</span>
+                                    {expandDeliveries ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                </div>
+                             </div>
+                             
+                             {expandDeliveries && (
+                                 <div className="bg-slate-50 p-4 border-t border-slate-100 animate-in slide-in-from-top-2">
+                                     <div className="space-y-3">
+                                         {productBreakdown.map(p => (
+                                             <div key={p.name}>
+                                                 <div className="flex justify-between text-[10px] uppercase font-bold text-slate-600 mb-1">
+                                                     <span>{p.name}</span>
+                                                     <span>{p.percentage}%</span>
+                                                 </div>
+                                                 <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                     <div className="h-full bg-[#FFC600]" style={{ width: `${p.percentage}%` }}></div>
+                                                 </div>
+                                             </div>
+                                         ))}
+                                     </div>
+                                     <button onClick={() => setShowAnalyticsModal(true)} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase">View Trend Analysis</button>
+                                 </div>
+                             )}
+                        </div>
+                        
+                        {/* ACTIVE PRESCRIBERS - NEW EXPANDABLE CARD */}
+                        <div className="bg-white shadow-sm border-l-4 border-slate-800 animate-in slide-in-from-bottom-4 duration-500 delay-100 group flex flex-col relative overflow-hidden">
+                            <div className="p-6 cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => setExpandPrescribers(!expandPrescribers)}>
+                                <div className="flex items-center justify-between mb-2">
+                                    <div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Doctors</p><h3 className="text-3xl font-black text-slate-900">{uniquePrescribersCount}</h3></div>
+                                    <div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200 transition-colors"><Stethoscope className="w-6 h-6 text-slate-900" /></div>
+                                </div>
+                                <div className="flex items-center gap-1 text-slate-400 text-[10px] font-bold uppercase">
+                                    <span>{expandPrescribers ? 'Hide' : 'Show'} Top 5</span>
+                                    {expandPrescribers ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                </div>
+                            </div>
+                            
+                            {expandPrescribers && (
+                                <div className="bg-slate-50 p-4 border-t border-slate-100 animate-in slide-in-from-top-2">
+                                    <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-3">Top Prescribers (Volume)</h4>
+                                    <ul className="space-y-2">
+                                        {topPrescribers.map((tp, i) => (
+                                            <li key={i} className="flex justify-between items-center text-xs">
+                                                <span className="font-bold text-slate-700 truncate max-w-[120px]">{i+1}. {tp.name}</span>
+                                                <span className="bg-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">{tp.count}</span>
+                                            </li>
+                                        ))}
+                                        {topPrescribers.length === 0 && <li className="text-[10px] italic text-slate-400">No data available</li>}
+                                    </ul>
+                                    <button onClick={() => setShowAnalyticsModal(true)} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase">Full Analysis</button>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ACTIVE CUSTODIES - STANDARD CARD */}
+                        <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Locations</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
                       </div>
                   </>
               )}
