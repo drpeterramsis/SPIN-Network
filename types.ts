@@ -16,11 +16,11 @@ export const PRODUCTS: Product[] = [
 export interface UserProfile {
   id: string;
   email?: string;
-  corporate_email?: string; // Mapped to email in UI usually
+  corporate_email?: string; 
   full_name: string;
   employee_id: string;
   role: UserRole;
-  manager_id?: string | null; // The ID of the DM (if MR) or LM (if DM)
+  manager_id?: string | null; 
   access: 'yes' | 'no' | 'pending';
 }
 
@@ -30,6 +30,7 @@ export interface Patient {
   full_name: string;
   phone_number: string;
   created_at?: string;
+  created_by?: string; // Critical for DM/LM filtering
 }
 
 export interface HCP {
@@ -37,6 +38,7 @@ export interface HCP {
   full_name: string;
   specialty?: string;
   hospital?: string;
+  created_by?: string; // Critical for DM/LM filtering
 }
 
 export interface Custody {
@@ -44,42 +46,32 @@ export interface Custody {
   name: string;
   type: 'rep' | 'clinic';
   created_at: string;
-  // Simplified: Custody is just "Pens", no specific product mix until delivery
-  current_stock: number; 
+  current_stock: number;
+  owner_id?: string; // Critical for Rep inventory linking
 }
 
 export interface StockTransaction {
   id: string;
   custody_id: string;
-  quantity: number; // Number of pens
+  quantity: number;
   transaction_date: string;
-  source: string; // e.g. 'Educator: John Doe', 'Transfer from Rep'
+  source: string;
   notes?: string;
 }
 
 export interface Delivery {
   id: string;
   patient_id: string;
-  hcp_id: string; // The prescriber
-  
-  // Product is assigned AT delivery
-  product_id: string; 
-  
-  quantity: number; // Always 1 pen usually
-  delivered_by: string; // User ID
-  
+  hcp_id: string;
+  product_id: string;
+  quantity: number;
+  delivered_by: string; 
   delivery_date: string;
-  rx_date?: string; // Prescription Date
-  
-  custody_id?: string; // Source Custody ID (Clinic or Rep)
-  
-  // Educator Data
-  educator_name?: string; // Reported Educator Name
-  educator_submission_date?: string; // Date of report
-
+  rx_date?: string; 
+  custody_id?: string;
+  educator_name?: string; 
+  educator_submission_date?: string; 
   notes?: string;
-  
-  // Joined fields for UI
   patient?: Patient;
   hcp?: HCP;
   custody?: Custody;

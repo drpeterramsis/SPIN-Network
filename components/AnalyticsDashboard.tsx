@@ -1,9 +1,10 @@
+
 import React, { useState, useMemo } from 'react';
-import { Delivery, HCP, PRODUCTS } from '../types';
-import { X, Hexagon, Filter, Calendar, BarChart3, PieChart, TrendingUp, ArrowLeft } from 'lucide-react';
+import { Delivery, HCP, PRODUCTS, UserProfile } from '../types';
+import { Filter, Calendar, BarChart3, PieChart, TrendingUp, ArrowLeft, Users } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  LineChart, Line, Pie, Cell, PieChart as RechartsPieChart 
+  Pie, Cell, PieChart as RechartsPieChart 
 } from 'recharts';
 
 interface AnalyticsDashboardProps {
@@ -11,21 +12,50 @@ interface AnalyticsDashboardProps {
   deliveries: Delivery[];
   hcps: HCP[];
   role: string;
+  profiles?: UserProfile[]; 
+  currentUserId?: string;
 }
 
-// Product Color Mapping
 const PRODUCT_COLORS: Record<string, string> = {
-  'glargivin-100': '#8b5cf6', // Violet
-  'humaxin-r': '#eab308',     // Yellow
-  'humaxin-mix': '#f97316',   // Orange
-  'default': '#94a3b8'        // Slate
+  'glargivin-100': '#8b5cf6', 
+  'humaxin-r': '#eab308',     
+  'humaxin-mix': '#f97316',   
+  'default': '#94a3b8'        
 };
 
 const COLORS = ['#000000', '#FFC600', '#94a3b8', '#475569', '#cbd5e1'];
 
-export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, deliveries, hcps, role }) => {
-  const [timeFilter, setTimeFilter] = useState('all'); // all, 30days, 90days, year
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, deliveries, hcps, role, profiles = [], currentUserId }) => {
+  const [timeFilter, setTimeFilter] = useState('all');
   const [productFilter, setProductFilter] = useState('all');
+  
+  // Hierarchy Filters
+  const [selectedDm, setSelectedDm] = useState<string>('all');
+  const [selectedMr, setSelectedMr] = useState<string>('all');
+
+  // Derived Hierarchy Lists
+  const myDMs = useMemo(() => {
+    if (role === 'lm' && currentUserId) {
+        return profiles.filter(p => p.role === 'dm' && p.manager_id === currentUserId);
+    }
+    return [];
+  }, [profiles, role, currentUserId]);
+
+  const availableMRs = useMemo(() => {
+    if (role === 'dm' && currentUserId) {
+        return profiles.filter(p => p.role === 'mr' && p.manager_id === currentUserId);
+    }
+    if (role === 'lm') {
+        if (selectedDm !== 'all') {
+            return profiles.filter(p => p.role === 'mr' && p.manager_id === selectedDm);
+        } else if (myDMs.length > 0) {
+            // If no DM selected, show all MRs under my DMs
+            const myDmIds = myDMs.map(d => d.id);
+            return profiles.filter(p => p.role === 'mr' && p.manager_id && myDmIds.includes(p.manager_id));
+        }
+    }
+    return [];
+  }, [profiles, role, currentUserId, selectedDm, myDMs]);
 
   // --- Filtering Logic ---
   const filteredData = useMemo(() => {
@@ -49,9 +79,36 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
       // Product Filter
       let passProd = productFilter === 'all' || d.product_id === productFilter;
 
-      return passTime && passProd;
+      // Hierarchy Filter
+      let passUser = true;
+      
+      if (role === 'mr') {
+          passUser = d.delivered_by === currentUserId;
+      } else if (role === 'dm') {
+          // If a specific MR is selected, filter by that. Else show all my MRs (which is handled by default visibleDeliveries passed in props, but good to be strict)
+          if (selectedMr !== 'all') {
+             passUser = d.delivered_by === selectedMr;
+          } else {
+             passUser = profiles.find(p => p.id === d.delivered_by)?.manager_id === currentUserId;
+          }
+      } else if (role === 'lm') {
+          if (selectedMr !== 'all') {
+              passUser = d.delivered_by === selectedMr;
+          } else if (selectedDm !== 'all') {
+              // Show all deliveries by MRs managed by this DM
+              const dmMrs = profiles.filter(p => p.manager_id === selectedDm).map(p => p.id);
+              passUser = dmMrs.includes(d.delivered_by);
+          } else {
+              // Show all deliveries in my Line
+              const myDmIds = myDMs.map(dm => dm.id);
+              const ownerProfile = profiles.find(p => p.id === d.delivered_by);
+              passUser = ownerProfile?.manager_id ? myDmIds.includes(ownerProfile.manager_id) : false;
+          }
+      }
+
+      return passTime && passProd && passUser;
     });
-  }, [deliveries, timeFilter, productFilter]);
+  }, [deliveries, timeFilter, productFilter, role, selectedDm, selectedMr, profiles, currentUserId, myDMs]);
 
   // --- Chart Data Preparation ---
 
@@ -76,7 +133,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
     const total = filteredData.length;
     
     filteredData.forEach(d => {
-      const pName = PRODUCTS.find(p => p.id === d.product_id)?.name || d.product_id;
       counts[d.product_id] = (counts[d.product_id] || 0) + d.quantity;
     });
 
@@ -93,7 +149,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
 
   // 3. Monthly Trend (Stacked Bar)
   const trendData = useMemo(() => {
-    // Map: 'YYYY-MM' -> { date, glargivin: 0, humaxin: 0... }
     const grouped: Record<string, any> = {};
 
     filteredData.forEach(d => {
@@ -103,7 +158,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
                 date: monthKey,
                 label: new Date(monthKey + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
             };
-            // Initialize all products to 0
             PRODUCTS.forEach(p => grouped[monthKey][p.id] = 0);
         }
         grouped[monthKey][d.product_id] = (grouped[monthKey][d.product_id] || 0) + d.quantity;
@@ -160,16 +214,43 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
          <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
             
             {/* Toolbar */}
-            <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6 flex flex-wrap gap-4 items-center justify-between sticky top-4 z-20">
-                <div className="flex items-center gap-4">
+            <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6 flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between sticky top-4 z-20">
+                <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2 border-r border-slate-200 pr-4">
                         <Filter className="w-4 h-4 text-[#FFC600]" />
-                        <span className="text-xs font-bold uppercase text-slate-500">Slicers:</span>
+                        <span className="text-xs font-bold uppercase text-slate-500">Filter:</span>
                     </div>
+
+                    {/* Role Based Filters */}
+                    {role === 'lm' && (
+                        <select 
+                            value={selectedDm} 
+                            onChange={(e) => { setSelectedDm(e.target.value); setSelectedMr('all'); }}
+                            className="bg-purple-50 text-purple-900 border border-purple-200 text-xs font-bold uppercase rounded px-3 py-2 outline-none focus:border-purple-400"
+                        >
+                            <option value="all">All District Managers</option>
+                            {myDMs.map(dm => <option key={dm.id} value={dm.id}>{dm.full_name}</option>)}
+                        </select>
+                    )}
+
+                    {(role === 'dm' || role === 'lm') && (
+                        <select 
+                            value={selectedMr} 
+                            onChange={(e) => setSelectedMr(e.target.value)}
+                            className="bg-blue-50 text-blue-900 border border-blue-200 text-xs font-bold uppercase rounded px-3 py-2 outline-none focus:border-blue-400"
+                        >
+                            <option value="all">All Medical Reps</option>
+                            {availableMRs.map(mr => <option key={mr.id} value={mr.id}>{mr.full_name}</option>)}
+                        </select>
+                    )}
+
+                    {/* Standard Filters */}
+                    <div className="h-6 w-px bg-slate-200 mx-1 hidden lg:block"></div>
+
                     <select 
                         value={timeFilter} 
                         onChange={(e) => setTimeFilter(e.target.value)}
-                        className="bg-slate-50 text-slate-900 border border-slate-200 text-xs font-bold uppercase rounded px-3 py-2 outline-none focus:border-[#FFC600] focus:bg-white transition-colors"
+                        className="bg-slate-50 text-slate-900 border border-slate-200 text-xs font-bold uppercase rounded px-3 py-2 outline-none focus:border-[#FFC600]"
                     >
                         <option value="all">All Time</option>
                         <option value="year">Past Year</option>
@@ -180,14 +261,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
                     <select 
                         value={productFilter} 
                         onChange={(e) => setProductFilter(e.target.value)}
-                        className="bg-slate-50 text-slate-900 border border-slate-200 text-xs font-bold uppercase rounded px-3 py-2 outline-none focus:border-[#FFC600] focus:bg-white transition-colors"
+                        className="bg-slate-50 text-slate-900 border border-slate-200 text-xs font-bold uppercase rounded px-3 py-2 outline-none focus:border-[#FFC600]"
                     >
                         <option value="all">All Products</option>
                         {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                 </div>
                 
-                <div className="text-xs font-bold text-slate-400 uppercase bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
+                <div className="text-xs font-bold text-slate-400 uppercase bg-slate-50 px-3 py-1 rounded-full border border-slate-100 whitespace-nowrap">
                     Records Analyzed: {filteredData.length}
                 </div>
             </div>
@@ -200,14 +281,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
                         <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Pens Distributed</p>
                         <h3 className="text-3xl font-black text-slate-900">{filteredData.length}</h3>
                     </div>
-                    <Hexagon className="w-8 h-8 text-[#FFC600] opacity-20" />
+                    <PieChart className="w-8 h-8 text-[#FFC600] opacity-20" />
                 </div>
                 <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-slate-800 flex items-center justify-between">
                      <div>
                         <p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Prescribers</p>
                         <h3 className="text-3xl font-black text-slate-900">{new Set(filteredData.map(d => d.hcp_id)).size}</h3>
                     </div>
-                    <BarChart3 className="w-8 h-8 text-slate-800 opacity-20" />
+                    <Users className="w-8 h-8 text-slate-800 opacity-20" />
                 </div>
                  <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-blue-500 flex items-center justify-between">
                      <div>
@@ -316,7 +397,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
             </div>
 
             <div className="bg-blue-50 p-4 rounded border border-blue-100 text-center text-xs text-blue-800">
-                Analysis generated based on live database records. Data includes only transactions visible to your role ({role.toUpperCase()}).
+                Analysis includes records visible to your role. Filters applied dynamically.
             </div>
          </div>
       </div>

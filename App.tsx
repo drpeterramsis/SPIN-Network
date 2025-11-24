@@ -12,7 +12,6 @@ import {
   Users, 
   Package, 
   Activity,
-  Sparkles,
   AlertTriangle,
   CheckCircle,
   LayoutDashboard,
@@ -36,16 +35,12 @@ import {
   Trash2,
   Info,
   Download,
-  ArrowLeft,
-  RefreshCw,
   Loader2,
-  RotateCcw,
-  Shield,
-  FileText,
-  PieChart,
+  RefreshCw,
   ChevronDown,
   ChevronUp,
-  Network
+  Network,
+  Filter
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -60,8 +55,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.030",
-  version: "2.0.030"
+  name: "S.P.I.N v2.0.031",
+  version: "2.0.031"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -69,11 +64,10 @@ type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock' | 'patients';
 
 const COLORS = ['#FFC600', '#000000', '#94a3b8', '#475569', '#cbd5e1'];
 
-// Product Color Mapping for small charts in dashboard
 const PRODUCT_COLOR_MAP: Record<string, string> = {
-  'glargivin-100': '#8b5cf6', // Violet
-  'humaxin-r': '#eab308',     // Yellow
-  'humaxin-mix': '#f97316',   // Orange
+  'glargivin-100': '#8b5cf6', 
+  'humaxin-r': '#eab308',     
+  'humaxin-mix': '#f97316',   
 };
 
 const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
@@ -95,7 +89,7 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
     );
 };
 
-const App: React.FC = () => {
+export const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -106,7 +100,6 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [dbView, setDbView] = useState<DBView>('deliveries');
   
-  // Data States
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [hcps, setHcps] = useState<HCP[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -115,18 +108,19 @@ const App: React.FC = () => {
   const [repCustody, setRepCustody] = useState<Custody | null>(null);
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
 
-  const [showAIModal, setShowAIModal] = useState(false);
+  // const [showAIModal, setShowAIModal] = useState(false); // Hidden by request
   const [showProfileModal, setShowProfileModal] = useState(false);
   
-  // Dashboard Expand States
   const [expandPrescribers, setExpandPrescribers] = useState(false);
   const [expandDeliveries, setExpandDeliveries] = useState(true);
 
-  // Computed Suggestions
+  // Database Filters (DM/LM)
+  const [filterDmId, setFilterDmId] = useState<string>('all');
+  const [filterMrId, setFilterMrId] = useState<string>('all');
+
   const [hcpSpecialties, setHcpSpecialties] = useState<string[]>([]);
   const [hcpHospitals, setHcpHospitals] = useState<string[]>([]);
 
-  // Edit State
   const [editItem, setEditItem] = useState<any>(null);
   const [editType, setEditType] = useState<DBView | null>(null);
   const [editDuplicateWarning, setEditDuplicateWarning] = useState(false);
@@ -134,7 +128,6 @@ const App: React.FC = () => {
   
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Delivery Form States
   const [step, setStep] = useState(1);
   const [nidSearch, setNidSearch] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
@@ -201,7 +194,6 @@ const App: React.FC = () => {
           const currentUser = session?.user ?? null;
           setUser(currentUser);
           
-          // Reset state on logout to prevent white screen / stale data
           if (event === 'SIGNED_OUT' || !currentUser) {
               setActiveTab('dashboard');
               setDeliveries([]);
@@ -246,13 +238,10 @@ const App: React.FC = () => {
       setPatients(p);
       setAllProfiles(profs);
       
-      // Load Current User Profile
       let currentProf = profs.find(pr => pr.id === user.id);
       
-      // Safety Check for Super Admin
       if (user.email === 'admin@spin.com') {
           if (!currentProf) {
-             // Create phantom profile in memory if DB sync lagged
              currentProf = { id: user.id, email: user.email, full_name: 'Super Admin', employee_id: 'ADMIN', role: 'admin', access: 'yes' };
           } else if (currentProf.role !== 'admin') {
               currentProf.role = 'admin';
@@ -260,7 +249,6 @@ const App: React.FC = () => {
           }
       }
       
-      // Default to MR if undefined
       if (currentProf && !currentProf.role) currentProf.role = 'mr';
       setUserProfile(currentProf || null);
 
@@ -303,18 +291,15 @@ const App: React.FC = () => {
       if (userProfile.role === 'admin') return deliveries;
 
       if (userProfile.role === 'mr') {
-          // MR sees only their own
           return deliveries.filter(d => d.delivered_by === user.id);
       }
 
       if (userProfile.role === 'dm') {
-          // DM sees their MRs
           const myMRs = allProfiles.filter(p => p.manager_id === user.id).map(p => p.id);
           return deliveries.filter(d => myMRs.includes(d.delivered_by));
       }
 
       if (userProfile.role === 'lm') {
-          // LM sees their DMs' MRs
           const myDMs = allProfiles.filter(p => p.manager_id === user.id).map(p => p.id);
           const myTeamMRs = allProfiles.filter(p => p.manager_id && myDMs.includes(p.manager_id)).map(p => p.id);
           return deliveries.filter(d => myTeamMRs.includes(d.delivered_by));
@@ -323,33 +308,19 @@ const App: React.FC = () => {
       return [];
   };
 
-  const getVisibleStock = () => {
-      if (!userProfile) return [];
-      if (userProfile.role === 'admin') return stockTransactions;
-      
-      // MR only sees stock transactions for their own custody
-      if (userProfile.role === 'mr' && repCustody) {
-          return stockTransactions.filter(t => t.custody_id === repCustody.id);
-      }
-
-      // Default: show empty or global if needed, but for now restrict to admin/mr own
-      return []; 
-  };
-
   const visibleDeliveries = getVisibleDeliveries();
-  const visibleStock = getVisibleStock();
 
   // Helper to resolve Hierarchy Names
-  const getMrAndDm = (mrId: string) => {
-      const mr = allProfiles.find(p => p.id === mrId);
+  const getOwnerDetails = (userId?: string) => {
+      if (!userId) return { mrName: '-', dmName: '-' };
+      const mr = allProfiles.find(p => p.id === userId);
       const dm = mr?.manager_id ? allProfiles.find(p => p.id === mr.manager_id) : null;
       return { 
           mrName: mr?.full_name || 'Unknown', 
-          dmName: dm?.full_name || 'Unassigned' 
+          dmName: dm?.full_name || '-' 
       };
   };
 
-  // --- ANALYTICS CALCULATIONS ---
   const uniquePrescribersCount = useMemo(() => {
       return new Set(visibleDeliveries.map(d => d.hcp_id)).size;
   }, [visibleDeliveries]);
@@ -392,6 +363,263 @@ const App: React.FC = () => {
           setSelectedCustody(repCustody.id);
       }
   }, [step, repCustody, selectedCustody]);
+
+
+  const handleCreatePatient = async () => {
+    if (!newPatientForm.full_name || !nidSearch) return;
+    setIsSubmitting(true);
+    try {
+        const newP = await dataService.createPatient({
+          national_id: nidSearch,
+          full_name: newPatientForm.full_name,
+          phone_number: newPatientForm.phone_number,
+          created_by: user.id
+        });
+        setFoundPatient(newP);
+        showToast("New patient registered", "success");
+    } catch(e) {
+        showToast("Error creating patient", "error");
+    } finally {
+        setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateHCP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newHCP.full_name || !newHCP.hospital) return;
+    setIsSubmitting(true);
+    try {
+        const created = await dataService.createHCP({
+            ...newHCP,
+            created_by: user.id
+        });
+        setHcps([...hcps, created]);
+        setSelectedHCP(created.id); 
+        setShowHCPModal(false);
+        setNewHCP({ full_name: '', specialty: '', hospital: '' });
+        loadData(); 
+        showToast("Doctor registered successfully!", "success");
+    } catch (error) {
+        showToast("Failed to register doctor.", "error");
+    } finally {
+        setIsSubmitting(false);
+    }
+  };
+
+  const handleReceiveStock = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsSubmitting(true);
+      try {
+        let targetRep = await dataService.getRepCustody();
+        if (!targetRep) {
+            try {
+                targetRep = await dataService.createCustody({
+                    name: 'My Rep Inventory',
+                    type: 'rep',
+                    created_at: new Date().toISOString(),
+                    owner_id: user.id
+                });
+                setRepCustody(targetRep);
+                setCustodies(prev => [...prev, targetRep!]);
+            } catch (createErr) {
+                targetRep = await dataService.getRepCustody();
+            }
+        }
+
+        if (!targetRep) throw new Error("My Inventory could not be found or initialized. Please refresh the page.");
+
+        const { quantity, educatorName, date } = receiveForm;
+        if (!quantity) {
+            showToast("Please enter quantity.", "error");
+            return;
+        }
+
+        await dataService.processStockTransaction(
+            targetRep.id,
+            Number(quantity),
+            date || getTodayString(),
+            `Educator: ${educatorName || 'Unknown'}`
+        );
+        showToast("Stock received successfully", "success");
+        setReceiveForm({ quantity: 0, educatorName: '', date: getTodayString() });
+        await loadData(); 
+      } catch (err: any) {
+          showToast(err.message, "error");
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+
+  const renderDatabaseFilters = () => {
+      const isDM = userProfile?.role === 'dm';
+      const isLM = userProfile?.role === 'lm';
+      
+      if (!isDM && !isLM) return null;
+
+      const myDMs = isLM ? allProfiles.filter(p => p.role === 'dm' && p.manager_id === user.id) : [];
+      
+      const availableMRs = isLM 
+        ? (filterDmId !== 'all' 
+            ? allProfiles.filter(p => p.role === 'mr' && p.manager_id === filterDmId)
+            : allProfiles.filter(p => p.role === 'mr' && p.manager_id && myDMs.map(d=>d.id).includes(p.manager_id)))
+        : allProfiles.filter(p => p.role === 'mr' && p.manager_id === user.id);
+
+      return (
+          <div className="flex gap-2 items-center bg-slate-50 p-2 rounded border border-slate-200 mb-4 flex-wrap">
+             <div className="flex items-center gap-1 border-r border-slate-200 pr-2 mr-1">
+                <Filter className="w-4 h-4 text-slate-400" />
+                <span className="text-[10px] uppercase font-bold text-slate-500">Filters:</span>
+             </div>
+             
+             {isLM && (
+                 <select value={filterDmId} onChange={e => { setFilterDmId(e.target.value); setFilterMrId('all'); }} className="text-xs border p-1 rounded outline-none focus:border-[#FFC600] bg-white">
+                     <option value="all">All District Managers</option>
+                     {myDMs.map(dm => <option key={dm.id} value={dm.id}>{dm.full_name}</option>)}
+                 </select>
+             )}
+
+             <select value={filterMrId} onChange={e => setFilterMrId(e.target.value)} className="text-xs border p-1 rounded outline-none focus:border-[#FFC600] bg-white">
+                 <option value="all">All Medical Reps</option>
+                 {availableMRs.map(mr => <option key={mr.id} value={mr.id}>{mr.full_name}</option>)}
+             </select>
+          </div>
+      );
+  };
+
+  const getFilteredDatabaseData = (data: any[]) => {
+      const isDM = userProfile?.role === 'dm';
+      const isLM = userProfile?.role === 'lm';
+      if (!isDM && !isLM) return data;
+
+      return data.filter(item => {
+          let ownerId = null;
+          if (dbView === 'deliveries') ownerId = item.delivered_by;
+          else if (dbView === 'stock') {
+              const cust = custodies.find(c => c.id === item.custody_id);
+              if (cust && cust.type === 'rep') ownerId = cust.owner_id;
+          }
+          else if (dbView === 'hcps' || dbView === 'patients') {
+              ownerId = item.created_by;
+          }
+          else if (dbView === 'locations') {
+              ownerId = item.owner_id; 
+          }
+
+          if (!ownerId && dbView === 'locations' && item.type === 'clinic') return true;
+          if (!ownerId) return true; // Show admin records or global records
+
+          if (filterMrId !== 'all' && ownerId !== filterMrId) return false;
+          
+          if (isLM && filterDmId !== 'all') {
+              const ownerProfile = allProfiles.find(p => p.id === ownerId);
+              if (ownerProfile?.manager_id !== filterDmId) return false;
+          }
+
+          if (isDM) {
+             const ownerProfile = allProfiles.find(p => p.id === ownerId);
+             if (ownerProfile?.manager_id !== user.id && ownerId !== user.id) return false;
+          }
+
+          if (isLM) {
+              const ownerProfile = allProfiles.find(p => p.id === ownerId);
+              const ownerManager = ownerProfile?.manager_id ? allProfiles.find(m => m.id === ownerProfile.manager_id) : null;
+              if (ownerManager?.manager_id !== user.id && ownerId !== user.id) return false;
+          }
+
+          return true;
+      });
+  };
+
+  const renderTeamInventory = () => {
+      if (userProfile?.role !== 'dm' && userProfile?.role !== 'lm') return null;
+
+      let teamMembers: UserProfile[] = [];
+      if (userProfile.role === 'dm') {
+          teamMembers = allProfiles.filter(p => p.role === 'mr' && p.manager_id === user.id);
+      } else {
+          const myDMs = allProfiles.filter(p => p.role === 'dm' && p.manager_id === user.id).map(p => p.id);
+          teamMembers = allProfiles.filter(p => p.role === 'mr' && p.manager_id && myDMs.includes(p.manager_id));
+      }
+
+      const teamCustodies = custodies.filter(c => c.type === 'rep' && teamMembers.map(m => m.id).includes(c.owner_id || ''));
+      const totalStock = teamCustodies.reduce((sum, c) => sum + (c.current_stock || 0), 0);
+
+      // Group by DM for LM view
+      const groupedData = userProfile.role === 'lm' 
+          ? teamMembers.reduce((acc, mr) => {
+              const dmId = mr.manager_id || 'unassigned';
+              if (!acc[dmId]) acc[dmId] = { dmName: allProfiles.find(p => p.id === dmId)?.full_name || 'Unassigned', mrs: [], total: 0 };
+              const stock = teamCustodies.find(c => c.owner_id === mr.id)?.current_stock || 0;
+              acc[dmId].mrs.push({ mr, stock });
+              acc[dmId].total += stock;
+              return acc;
+          }, {} as Record<string, any>)
+          : null;
+
+      return (
+          <div className="space-y-6">
+              <div className="bg-white p-6 shadow-sm border-l-4 border-blue-500 rounded-lg">
+                  <div className="flex justify-between items-center mb-4">
+                      <div>
+                          <h3 className="text-lg font-bold text-slate-900">Team Inventory Overview</h3>
+                          <p className="text-xs text-slate-500">{userProfile.role === 'lm' ? 'Regional' : 'District'} Stock Availability</p>
+                      </div>
+                      <div className="text-right">
+                          <span className="text-4xl font-black text-slate-900">{totalStock}</span>
+                          <span className="block text-[10px] font-bold uppercase text-slate-400">Total Pens</span>
+                      </div>
+                  </div>
+                  
+                  {userProfile.role === 'dm' ? (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 font-bold">
+                                <tr>
+                                    <th className="p-3">Medical Rep</th>
+                                    <th className="p-3 text-right">Available Stock</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 text-sm">
+                                {teamMembers.map(mr => {
+                                    const c = teamCustodies.find(tc => tc.owner_id === mr.id);
+                                    return (
+                                        <tr key={mr.id}>
+                                            <td className="p-3 font-bold text-slate-700">{mr.full_name}</td>
+                                            <td className="p-3 text-right font-mono font-bold">
+                                                {c ? c.current_stock : <span className="text-slate-300">0</span>}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                        {Object.values(groupedData || {}).map((group: any) => (
+                            <div key={group.dmName} className="border border-slate-200 rounded overflow-hidden">
+                                <div className="bg-slate-50 p-2 flex justify-between items-center border-b border-slate-100">
+                                    <span className="font-bold text-xs text-slate-700">{group.dmName} (DM)</span>
+                                    <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded">Subtotal: {group.total}</span>
+                                </div>
+                                <table className="w-full text-left">
+                                    <tbody className="divide-y divide-slate-50 text-xs">
+                                        {group.mrs.map((item: any) => (
+                                            <tr key={item.mr.id}>
+                                                <td className="p-2 pl-4 text-slate-600">{item.mr.full_name}</td>
+                                                <td className="p-2 text-right font-mono">{item.stock}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ))}
+                    </div>
+                  )}
+              </div>
+          </div>
+      );
+  };
 
   const checkEditDuplication = async () => {
       if (editType === 'deliveries' && editItem?.patient_id && editItem?.product_id) {
@@ -443,24 +671,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCreatePatient = async () => {
-    if (!newPatientForm.full_name || !nidSearch) return;
-    setIsSubmitting(true);
-    try {
-        const newP = await dataService.createPatient({
-          national_id: nidSearch,
-          full_name: newPatientForm.full_name,
-          phone_number: newPatientForm.phone_number
-        });
-        setFoundPatient(newP);
-        showToast("New patient registered", "success");
-    } catch(e) {
-        showToast("Error creating patient", "error");
-    } finally {
-        setIsSubmitting(false);
-    }
-  };
-
   const handleCancelDelivery = () => {
       if(window.confirm("Are you sure you want to cancel this transaction? All data will be lost.")) {
         setStep(1);
@@ -473,25 +683,6 @@ const App: React.FC = () => {
         setEducatorDate('');
         setRxDate('');
       }
-  };
-
-  const handleCreateHCP = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newHCP.full_name || !newHCP.hospital) return;
-    setIsSubmitting(true);
-    try {
-        const created = await dataService.createHCP(newHCP);
-        setHcps([...hcps, created]);
-        setSelectedHCP(created.id); 
-        setShowHCPModal(false);
-        setNewHCP({ full_name: '', specialty: '', hospital: '' });
-        loadData(); 
-        showToast("Doctor registered successfully!", "success");
-    } catch (error) {
-        showToast("Failed to register doctor.", "error");
-    } finally {
-        setIsSubmitting(false);
-    }
   };
 
   const handleSubmitDelivery = async () => {
@@ -537,49 +728,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleReceiveStock = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setIsSubmitting(true);
-      try {
-        let targetRep = await dataService.getRepCustody();
-        if (!targetRep) {
-            try {
-                targetRep = await dataService.createCustody({
-                    name: 'My Rep Inventory',
-                    type: 'rep',
-                    created_at: new Date().toISOString()
-                });
-                setRepCustody(targetRep);
-                setCustodies(prev => [...prev, targetRep!]);
-            } catch (createErr) {
-                targetRep = await dataService.getRepCustody();
-            }
-        }
-
-        if (!targetRep) throw new Error("My Inventory could not be found or initialized. Please refresh the page.");
-
-        const { quantity, educatorName, date } = receiveForm;
-        if (!quantity) {
-            showToast("Please enter quantity.", "error");
-            return;
-        }
-
-        await dataService.processStockTransaction(
-            targetRep.id,
-            Number(quantity),
-            date || getTodayString(),
-            `Educator: ${educatorName || 'Unknown'}`
-        );
-        showToast("Stock received successfully", "success");
-        setReceiveForm({ quantity: 0, educatorName: '', date: getTodayString() });
-        await loadData(); 
-      } catch (err: any) {
-          showToast(err.message, "error");
-      } finally {
-          setIsSubmitting(false);
-      }
-  };
-
   const handleTransferStock = async (e: React.FormEvent) => {
     e.preventDefault();
     const { toCustodyId, quantity, date, sourceType, educatorName } = transferForm;
@@ -601,7 +749,8 @@ const App: React.FC = () => {
                     r = await dataService.createCustody({
                         name: 'My Rep Inventory',
                         type: 'rep',
-                        created_at: new Date().toISOString()
+                        created_at: new Date().toISOString(),
+                        owner_id: user.id
                     });
                     setRepCustody(r);
                     setCustodies(prev => [...prev, r!]);
@@ -790,9 +939,10 @@ const App: React.FC = () => {
   };
 
   const filterData = (data: any[]) => {
-      if (!searchTerm) return data;
+      let d = getFilteredDatabaseData(data); // Apply Hierarchy Filter First
+      if (!searchTerm) return d;
       const lower = searchTerm.toLowerCase();
-      return data.filter(item => {
+      return d.filter(item => {
           const stringify = (obj: any): string => {
              return Object.values(obj || {}).map(v => typeof v === 'object' ? stringify(v) : v).join(' ');
           };
@@ -847,6 +997,7 @@ const App: React.FC = () => {
   );
 
   const renderTeamStats = () => {
+      // (Implementation same as provided in last turn, kept for completeness)
       if (userProfile?.role === 'dm') {
           const myMrs = allProfiles.filter(p => p.manager_id === user.id);
           const stats = myMrs.map(mr => {
@@ -868,16 +1019,13 @@ const App: React.FC = () => {
                                   <td className="p-3 text-right font-black">{mr.count}</td>
                               </tr>
                           ))}
-                          {stats.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-slate-400 italic">No team members assigned.</td></tr>}
                       </tbody>
                   </table>
               </div>
           );
       }
-      
       if (userProfile?.role === 'lm') {
            const myDms = allProfiles.filter(p => p.manager_id === user.id);
-           // Build tree
            const tree = myDms.map(dm => {
                const dmMrs = allProfiles.filter(p => p.manager_id === dm.id);
                const mrStats = dmMrs.map(mr => ({
@@ -887,30 +1035,19 @@ const App: React.FC = () => {
                const total = mrStats.reduce((sum, item) => sum + item.count, 0);
                return { dm, mrStats, total };
            }).sort((a,b) => b.total - a.total);
-
            return (
                <div className="space-y-4">
                    {tree.map(node => (
                        <div key={node.dm.id} className="border border-slate-200 rounded-lg overflow-hidden">
                            <div className="bg-slate-50 p-3 flex justify-between items-center border-b border-slate-100">
-                               <div>
-                                   <h4 className="font-bold text-slate-800 text-sm">{node.dm.full_name} <span className="text-xs font-normal text-slate-500">(DM)</span></h4>
-                                   <p className="text-[10px] text-slate-400 uppercase font-bold">{node.mrStats.length} MRs Assigned</p>
-                               </div>
+                               <div><h4 className="font-bold text-slate-800 text-sm">{node.dm.full_name} <span className="text-xs font-normal text-slate-500">(DM)</span></h4><p className="text-[10px] text-slate-400 uppercase font-bold">{node.mrStats.length} MRs Assigned</p></div>
                                <div className="bg-black text-[#FFC600] px-3 py-1 rounded text-xs font-black">{node.total}</div>
                            </div>
                            <div className="divide-y divide-slate-50">
-                               {node.mrStats.map(mr => (
-                                   <div key={mr.id} className="p-2 pl-4 flex justify-between items-center text-xs hover:bg-slate-50">
-                                       <span className="text-slate-600 font-medium">{mr.full_name}</span>
-                                       <span className="font-mono text-slate-400">{mr.count}</span>
-                                   </div>
-                               ))}
-                               {node.mrStats.length === 0 && <div className="p-2 text-center text-[10px] text-slate-400">No MRs in this district.</div>}
+                               {node.mrStats.map(mr => (<div key={mr.id} className="p-2 pl-4 flex justify-between items-center text-xs hover:bg-slate-50"><span className="text-slate-600 font-medium">{mr.full_name}</span><span className="font-mono text-slate-400">{mr.count}</span></div>))}
                            </div>
                        </div>
                    ))}
-                   {tree.length === 0 && <div className="p-4 text-center text-slate-400 italic">No districts assigned.</div>}
                </div>
            );
       }
@@ -924,7 +1061,9 @@ const App: React.FC = () => {
   const canDeliver = userProfile?.role === 'mr' || userProfile?.role === 'admin';
   const canManageStock = userProfile?.role === 'mr' || userProfile?.role === 'admin';
   const isAdmin = userProfile?.role === 'admin';
-  const isReadOnly = userProfile?.role === 'dm' || userProfile?.role === 'lm';
+  const isDM = userProfile?.role === 'dm';
+  const isLM = userProfile?.role === 'lm';
+  const isReadOnly = isDM || isLM; // Fix for undefined variable
 
   return (
     <div className="h-screen bg-slate-100 flex flex-col font-sans overflow-hidden relative">
@@ -968,11 +1107,14 @@ const App: React.FC = () => {
                 onBack={() => setActiveTab('dashboard')} 
                 deliveries={visibleDeliveries} 
                 hcps={hcps} 
-                role={userProfile?.role || 'mr'} 
+                role={userProfile?.role || 'mr'}
+                profiles={allProfiles}
+                currentUserId={user.id}
             />
           </div>
       )}
 
+      {/* Edit Modal */}
       {editItem && editType && (
          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); setEditPatientDetails(null); }}>
              <div className="bg-white w-full max-w-md border-t-4 border-[#FFC600] shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -984,7 +1126,6 @@ const App: React.FC = () => {
                      <button onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); setEditPatientDetails(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
                 <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
-                    {/* Form fields */}
                     {editType === 'deliveries' && (
                         <>
                              {editDuplicateWarning && (
@@ -1004,21 +1145,8 @@ const App: React.FC = () => {
                                  </div>
                                  <select className="w-full border p-2 bg-white mb-2" value={editItem.patient_id} onChange={e => setEditItem({...editItem, patient_id: e.target.value})}>{patients.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select>
                              </div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Prescriber</label><select className="w-full border p-2 bg-white" value={editItem.hcp_id} onChange={e => setEditItem({...editItem, hcp_id: e.target.value})}>{hcps.map(h => <option key={h.id} value={h.id}>{h.full_name}</option>)}</select></div>
-                             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label><select className="w-full border p-2 bg-white" value={editItem.product_id} onChange={e => setEditItem({...editItem, product_id: e.target.value})}>{PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-                             <div>
-                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Source Custody</label>
-                                 <select className="w-full border p-2 bg-white" value={editItem.custody_id} onChange={e => setEditItem({...editItem, custody_id: e.target.value})}>
-                                     {custodies.map(c => (
-                                        <option key={c.id} value={c.id}>
-                                            {c.name}
-                                        </option>
-                                    ))}
-                                 </select>
-                             </div>
                         </>
                     )}
-                    {/* Logic remains same */}
                     <button type="submit" disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
                          <Save className="w-4 h-4" /> Save Changes
                     </button>
@@ -1027,7 +1155,7 @@ const App: React.FC = () => {
          </div>
       )}
 
-      {/* HCP Modal */}
+      {/* HCP & Clinic Modals */}
       {showHCPModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
             <div className="bg-white p-6 rounded shadow-xl w-full max-w-sm animate-in zoom-in duration-200">
@@ -1047,7 +1175,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Clinic Modal */}
       {showClinicModal && (
          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
              <div className="bg-white p-6 rounded shadow-xl w-full max-w-sm animate-in zoom-in duration-200">
@@ -1076,7 +1203,6 @@ const App: React.FC = () => {
          </div>
       )}
 
-
       {/* Main Navbar */}
       <nav className="bg-black text-white sticky top-0 z-40 shadow-md border-b-4 border-[#FFC600] shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1096,7 +1222,7 @@ const App: React.FC = () => {
                     <div className="px-3 py-1 bg-slate-800 rounded text-[10px] font-bold uppercase text-[#FFC600] border border-slate-700">
                         {userProfile?.role === 'mr' ? 'Med Rep' : userProfile?.role === 'dm' ? 'District Mgr' : userProfile?.role === 'lm' ? 'Line Mgr' : 'Admin'}
                     </div>
-                    <button onClick={() => setShowAIModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded transition-colors border border-slate-700 text-[#FFC600]"><Sparkles className="w-3 h-3" /> Intelligence</button>
+                    {/* AI Button Hidden */}
                     <div className="h-8 w-px bg-slate-800 mx-1"></div>
                     <button onClick={() => supabase?.auth.signOut()} className="text-slate-400 hover:text-white transition-colors flex items-center gap-2" title="Logout"><LogOut className="w-5 h-5" /></button>
                   </>
@@ -1108,7 +1234,7 @@ const App: React.FC = () => {
         </div>
       </nav>
 
-      {/* Main Content Area - Hidden when analytics is full screen */}
+      {/* Main Content Area */}
       {activeTab !== 'analytics' && (
       <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative flex flex-col">
         <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-full flex-grow">
@@ -1149,12 +1275,10 @@ const App: React.FC = () => {
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                         
-                        {/* MY INVENTORY CARD */}
                         {canManageStock && (
                             <div onClick={() => { setActiveTab('custody'); }} className="bg-white p-6 shadow-sm border-l-4 border-blue-500 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 cursor-pointer hover:bg-blue-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">My Inventory</p><h3 className="text-3xl font-black text-slate-900">{repCustody?.current_stock || 0}</h3></div><div className="bg-blue-50 p-3 rounded-full group-hover:bg-blue-200 transition-colors"><Briefcase className="w-6 h-6 text-blue-600 group-hover:text-black" /></div></div>
                         )}
 
-                        {/* TOTAL DELIVERED - UPDATED */}
                         <div className="bg-white shadow-sm border-l-4 border-[#FFC600] animate-in slide-in-from-bottom-4 duration-500 delay-75 group flex flex-col relative overflow-hidden">
                              <div className="p-6 cursor-pointer hover:bg-yellow-50 transition-colors" onClick={() => setExpandDeliveries(!expandDeliveries)}>
                                 <div className="flex items-center justify-between mb-2">
@@ -1185,20 +1309,10 @@ const App: React.FC = () => {
                                              </RechartsPieChart>
                                          </ResponsiveContainer>
                                      </div>
-                                     <div className="grid grid-cols-2 gap-2 mt-2">
-                                         {productBreakdown.slice(0,4).map((p,i) => (
-                                             <div key={i} className="flex items-center gap-1 text-[9px] uppercase font-bold text-slate-500">
-                                                 <div className="w-2 h-2 rounded-full" style={{backgroundColor: PRODUCT_COLOR_MAP[p.id] || '#cbd5e1'}}></div>
-                                                 <span className="truncate">{p.name}: <span className="text-black">{p.value} ({p.percentage}%)</span></span>
-                                             </div>
-                                         ))}
-                                     </div>
-                                     <button onClick={() => setActiveTab('analytics')} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase flex items-center justify-center gap-1">Full Analysis <ArrowRight className="w-3 h-3"/></button>
                                  </div>
                              )}
                         </div>
                         
-                        {/* ACTIVE PRESCRIBERS - UPDATED EXPANDABLE CARD */}
                         <div className="bg-white shadow-sm border-l-4 border-slate-800 animate-in slide-in-from-bottom-4 duration-500 delay-100 group flex flex-col relative overflow-hidden">
                             <div className="p-6 cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => setExpandPrescribers(!expandPrescribers)}>
                                 <div className="flex items-center justify-between mb-2">
@@ -1226,16 +1340,13 @@ const App: React.FC = () => {
                                         ))}
                                         {topPrescribers.length === 0 && <li className="text-[10px] italic text-slate-400">No data available</li>}
                                     </ul>
-                                    <button onClick={() => setActiveTab('analytics')} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase flex items-center justify-center gap-1">Full Prescriber Analysis <ArrowRight className="w-3 h-3"/></button>
                                 </div>
                             )}
                         </div>
 
-                        {/* ACTIVE CUSTODIES - STANDARD CARD */}
                         <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Locations</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
                       </div>
 
-                      {/* Hierarchy Breakdown for Managers */}
                       {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && (
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mt-6 animate-in slide-in-from-bottom-6">
                             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
@@ -1259,350 +1370,321 @@ const App: React.FC = () => {
                 <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
                     <div className="flex items-center gap-4 border-b-2 border-slate-100 pb-4">
                         <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 1 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>1</div>
-                        <div className="h-0.5 bg-slate-100 flex-1"></div>
                         <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 2 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>2</div>
+                        <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 3 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>3</div>
+                        <div className="flex-1 text-right text-xs font-bold uppercase text-slate-400">
+                            {step === 1 ? 'Patient Search' : step === 2 ? 'Rx Details' : 'Confirmation'}
+                        </div>
                     </div>
 
                     {step === 1 && (
-                        <div className="bg-white shadow-sm border-t-4 border-[#FFC600] p-8">
-                            <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2"><UserCircle className="w-6 h-6 text-[#FFC600]" /> Patient Identification</h2>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">National ID / Phone Number</label>
-                                    <div className="flex gap-2">
-                                        <input type="text" placeholder="Enter ID to search..." className="flex-1 border-2 border-slate-200 p-3 font-mono text-lg focus:border-black outline-none transition-colors" value={nidSearch} onChange={e => setNidSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handlePatientSearch()} />
-                                        <button onClick={handlePatientSearch} className="bg-black text-white px-6 font-bold uppercase tracking-wide hover:bg-slate-800 transition-colors"><Search className="w-5 h-5" /></button>
+                        <div className="bg-white p-8 rounded-xl shadow-lg border-t-4 border-[#FFC600]">
+                            <h2 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tight flex items-center gap-2"><Search className="w-5 h-5" /> Identify Patient</h2>
+                            <div className="flex gap-2 mb-6">
+                                <input 
+                                    type="text" 
+                                    value={nidSearch}
+                                    onChange={(e) => setNidSearch(e.target.value)} 
+                                    className="flex-1 px-4 py-3 border-2 border-slate-200 bg-slate-50 focus:bg-white focus:border-black outline-none font-bold text-lg transition-colors placeholder:font-normal"
+                                    placeholder="Enter National ID or Phone"
+                                />
+                                <button onClick={handlePatientSearch} className="bg-black text-white px-6 font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors">Search</button>
+                            </div>
+
+                            {hasSearched && !foundPatient && (
+                                <div className="bg-slate-50 p-6 rounded border border-slate-200 animate-in fade-in">
+                                    <div className="flex items-center gap-2 text-yellow-700 font-bold mb-4">
+                                        <AlertTriangle className="w-5 h-5" /> Patient Not Found
+                                    </div>
+                                    <div className="space-y-4">
+                                        <input type="text" placeholder="Full Name" className="w-full p-3 border border-slate-200 rounded" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} />
+                                        <input type="text" placeholder="Phone Number" className="w-full p-3 border border-slate-200 rounded" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} />
+                                        <button onClick={handleCreatePatient} className="w-full bg-[#FFC600] py-3 font-bold uppercase hover:bg-yellow-400 text-black">Register New Patient</button>
                                     </div>
                                 </div>
-                                
-                                {hasSearched && !foundPatient && (
-                                    <div className="mt-8 bg-slate-50 p-6 border border-slate-200 animate-in fade-in zoom-in duration-300">
-                                        <div className="flex items-center gap-3 mb-4 text-orange-600">
-                                            <AlertTriangle className="w-5 h-5" />
-                                            <span className="font-bold">Patient not found in directory.</span>
-                                        </div>
-                                        <h3 className="font-bold text-lg mb-4">Register New Patient</h3>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Full Name</label><input type="text" className="w-full border p-2" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} placeholder="Patient Name" /></div>
-                                            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Phone Number</label><input type="text" className="w-full border p-2" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} placeholder="01xxxxxxxxx" /></div>
-                                        </div>
-                                        <button onClick={handleCreatePatient} disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
-                                            Create & Continue <ArrowRight className="w-4 h-4" />
-                                        </button>
+                            )}
+
+                            {foundPatient && (
+                                <div className="bg-green-50 p-6 rounded border border-green-200 flex justify-between items-center animate-in fade-in">
+                                    <div>
+                                        <h3 className="font-bold text-green-900 text-lg">{foundPatient.full_name}</h3>
+                                        <p className="text-green-700 text-sm font-mono">{foundPatient.national_id}</p>
                                     </div>
-                                )}
-                                
-                                {foundPatient && (
-                                    <div className="mt-6 bg-green-50 border border-green-200 p-4 flex justify-between items-center animate-in fade-in slide-in-from-top-2">
-                                        <div><h3 className="font-bold text-green-900">{foundPatient.full_name}</h3><p className="text-sm text-green-700 font-mono">ID: {foundPatient.national_id}</p></div>
-                                        <button onClick={() => setStep(2)} className="bg-green-600 text-white px-4 py-2 font-bold uppercase text-xs rounded hover:bg-green-700 flex items-center gap-2">Continue <ArrowRight className="w-3 h-3" /></button>
-                                    </div>
-                                )}
-                            </div>
+                                    <button onClick={() => setStep(2)} className="bg-green-600 text-white px-6 py-2 rounded font-bold uppercase text-sm hover:bg-green-700 shadow-lg flex items-center gap-2">
+                                        Next Step <ArrowRight className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     )}
+
                     {step === 2 && (
-                         <div className="bg-white shadow-sm border-t-4 border-black p-8 animate-in slide-in-from-right-4 duration-300">
-                             <div className="flex justify-between items-start mb-6 border-b border-slate-100 pb-4">
-                                <div><h2 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Package className="w-6 h-6 text-[#FFC600]" /> Delivery Details</h2><p className="text-xs text-slate-500 mt-1">Dispensing to: <span className="font-bold text-slate-900">{foundPatient?.full_name}</span></p></div>
-                                <button onClick={handleCancelDelivery} className="text-xs font-bold text-red-500 hover:text-red-700 uppercase">Cancel</button>
-                             </div>
-
-                             {duplicateWarning && (
-                                <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 flex items-start gap-3">
-                                    <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
-                                    <div><h4 className="font-bold text-red-800 text-sm uppercase">Duplicate Warning</h4><p className="text-xs text-red-700 mt-1">This patient has already received this product within the last 20 days. Please verify prescription.</p></div>
-                                </div>
-                             )}
-
-                             <div className="space-y-6">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div>
-                                        <div className="flex justify-between items-end mb-1"><label className="block text-xs font-bold text-slate-500 uppercase">Prescribing Doctor</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div>
-                                        <select className="w-full border p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select HCP --</option>{hcps.map(h => <option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>)}</select>
-                                    </div>
-                                    <div>
-                                        <div className="flex justify-between items-end mb-1"><label className="block text-xs font-bold text-slate-500 uppercase">Source Location</label><button onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div>
-                                        <select className="w-full border p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedCustody} onChange={e => setSelectedCustody(e.target.value)}>
-                                            {repCustody && <option value={repCustody.id}>My Inventory (Rep)</option>}
-                                            {custodies.filter(c => c.type === 'clinic').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                         <div className="bg-white p-8 rounded-xl shadow-lg border-t-4 border-[#FFC600]">
+                             <h2 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tight flex items-center gap-2"><Syringe className="w-5 h-5" /> Prescription Details</h2>
+                             
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Prescribing Doctor</label>
+                                    <div className="flex gap-2">
+                                        <select 
+                                            value={selectedHCP} 
+                                            onChange={(e) => setSelectedHCP(e.target.value)}
+                                            className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black"
+                                        >
+                                            <option value="">Select Doctor</option>
+                                            {hcps.map(h => <option key={h.id} value={h.id}>{h.full_name} ({h.hospital})</option>)}
                                         </select>
+                                        <button onClick={() => setShowHCPModal(true)} className="bg-slate-200 px-3 hover:bg-[#FFC600] transition-colors"><Plus className="w-5 h-5" /></button>
                                     </div>
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Product</label>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Prescription Date</label>
+                                    <input type="date" className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black" value={rxDate} onChange={e => setRxDate(e.target.value)} />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Product</label>
+                                    <div className="grid grid-cols-1 gap-2">
                                         {PRODUCTS.map(p => (
-                                            <button key={p.id} onClick={() => setSelectedProduct(p.id)} className={`p-4 border-2 text-left transition-all ${getProductButtonStyles(p.id, selectedProduct === p.id)}`}>
-                                                <div className="font-bold">{p.name}</div>
-                                                <div className="text-[10px] opacity-70 uppercase">{p.type}</div>
+                                            <button 
+                                                key={p.id}
+                                                onClick={() => setSelectedProduct(p.id)}
+                                                className={`p-3 text-left border-2 rounded transition-all font-bold text-sm flex justify-between items-center ${selectedProduct === p.id ? getProductButtonStyles(p.id, true) : 'border-slate-100 bg-white text-slate-600 hover:border-slate-300'}`}
+                                            >
+                                                <span>{p.name}</span>
+                                                {selectedProduct === p.id && <CheckCircle className="w-4 h-4" />}
                                             </button>
                                         ))}
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 border border-slate-200">
-                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Rx Date</label><input type="date" className="w-full border p-2 text-sm" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div>
-                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Delivery Date</label><input type="date" className="w-full border p-2 text-sm" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} /></div>
-                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Educator Report Date</label><input type="date" className="w-full border p-2 text-sm" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div>
-                                    <div className="md:col-span-3">
-                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Reported Educator Name</label>
-                                        <input type="text" className="w-full border p-2 text-sm" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-suggestions-main" placeholder="Educator who verified" />
-                                        <datalist id="educator-suggestions-main">{educatorSuggestions.map(s => <option key={s} value={s} />)}</datalist>
-                                    </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Educator Details</label>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Reported By (Educator Name)" 
+                                        className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black mb-3"
+                                        list="educator-list"
+                                        value={educatorName}
+                                        onChange={e => setEducatorName(e.target.value)}
+                                    />
+                                    <datalist id="educator-list">{educatorSuggestions.map((s,i) => <option key={i} value={s} />)}</datalist>
+                                    <input 
+                                        type="date" 
+                                        placeholder="Date Reported"
+                                        className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black"
+                                        value={educatorDate}
+                                        onChange={e => setEducatorDate(e.target.value)}
+                                    />
                                 </div>
-
-                                <button onClick={handleSubmitDelivery} disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-4 text-lg uppercase tracking-wide flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.99]">
-                                    Confirm Delivery <CheckCircle className="w-6 h-6" />
-                                </button>
                              </div>
-                        </div>
+
+                             {duplicateWarning && (
+                                 <div className="mt-6 bg-red-50 border-l-4 border-red-500 p-4 flex gap-3">
+                                     <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0" />
+                                     <div>
+                                         <h4 className="font-bold text-red-800 text-sm uppercase">Duplicate Warning</h4>
+                                         <p className="text-red-700 text-xs mt-1">This patient has received this specific product within the last 20 days. Please verify before proceeding.</p>
+                                     </div>
+                                 </div>
+                             )}
+
+                             <div className="flex justify-between mt-8">
+                                 <button onClick={handleCancelDelivery} className="text-slate-400 hover:text-red-500 font-bold uppercase text-xs">Cancel Transaction</button>
+                                 <button onClick={handleSubmitDelivery} className="bg-black text-[#FFC600] px-8 py-3 font-bold uppercase tracking-wider hover:bg-slate-800 shadow-lg flex items-center gap-2">
+                                     Confirm Delivery <CheckCircle className="w-4 h-4" />
+                                 </button>
+                             </div>
+                         </div>
                     )}
                 </div>
              )
           )}
-           {activeTab === 'database' && (
-             !user ? (
-                 <LockedState title="Database Locked" description="Authorized personnel only." loginRequired />
-             ) : (
-                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
-                     <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 shadow-sm border border-slate-200">
-                         <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0">
-                             {(['deliveries', 'hcps', 'locations', 'stock', 'patients'] as DBView[]).map(view => (
-                                 <button key={view} onClick={() => setDbView(view)} className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-colors ${dbView === view ? 'bg-black text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                                     {view === 'hcps' ? 'Doctors' : view.charAt(0).toUpperCase() + view.slice(1)}
-                                 </button>
-                             ))}
-                         </div>
-                         <div className="relative w-full md:w-64">
-                             <input type="text" placeholder="Search records..." className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 text-sm rounded focus:border-black outline-none transition-colors" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                         </div>
-                     </div>
-                     {/* ... Table implementation ... */}
-                     <div className="bg-white shadow-sm border border-slate-200 overflow-hidden">
-                         <div className="overflow-x-auto">
-                             <table className="w-full text-left border-collapse">
-                                 <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
-                                     <tr>
-                                         {dbView === 'deliveries' && <><th className="p-4">Date</th><th className="p-4">Patient</th><th className="p-4">Product</th><th className="p-4">HCP</th><th className="p-4">Source</th><th className="p-4">Educator</th>
-                                         {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && <th className="p-4">Medical Rep</th>}
-                                         {userProfile?.role === 'lm' && <th className="p-4">District Mgr</th>}
-                                         <th className="p-4 text-right">Actions</th></>}
-                                         {dbView === 'hcps' && <><th className="p-4">Doctor Name</th><th className="p-4">Specialty</th><th className="p-4">Hospital</th><th className="p-4 text-right">Actions</th></>}
-                                         {dbView === 'locations' && <><th className="p-4">Name</th><th className="p-4">Type</th><th className="p-4">Stock</th><th className="p-4 text-right">Actions</th></>}
-                                         {dbView === 'stock' && <><th className="p-4">Date</th><th className="p-4">Source / Destination</th><th className="p-4 text-center">Qty</th><th className="p-4 text-right">Actions</th></>}
-                                         {dbView === 'patients' && <><th className="p-4">Full Name</th><th className="p-4">National ID</th><th className="p-4">Phone</th><th className="p-4 text-right">Actions</th></>}
-                                     </tr>
-                                 </thead>
-                                 <tbody className="divide-y divide-slate-100 text-sm">
-                                     {dbView === 'deliveries' && filterData(visibleDeliveries).map((item: Delivery) => (
-                                         <tr key={item.id} className="hover:bg-slate-50 group">
-                                             <td className="p-4 font-mono text-slate-500 text-xs">{formatDateFriendly(item.delivery_date)}</td>
-                                             <td className="p-4"><div className="font-bold text-slate-900">{item.patient?.full_name}</div><div className="text-[10px] text-slate-400 font-mono">{item.patient?.national_id}</div></td>
-                                             <td className="p-4"><span className={`text-[10px] font-bold px-2 py-1 rounded border uppercase ${getProductStyles(item.product_id)}`}>{getProductName(item.product_id)}</span></td>
-                                             <td className="p-4 text-slate-600 text-xs">{item.hcp?.full_name}</td>
-                                             <td className="p-4 text-slate-500 text-xs">{item.custody?.name}</td>
-                                             <td className="p-4 text-slate-500 text-xs">{item.educator_name || '-'}</td>
-                                             
-                                             {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && (
-                                                <td className="p-4 text-xs font-bold text-slate-700">{getMrAndDm(item.delivered_by).mrName}</td>
-                                             )}
-                                             {userProfile?.role === 'lm' && (
-                                                <td className="p-4 text-xs text-slate-600">{getMrAndDm(item.delivered_by).dmName}</td>
-                                             )}
 
-                                             <td className="p-4 text-right">
-                                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                     {!isReadOnly && <button onClick={() => openEditModal('deliveries', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>}
-                                                     {(isAdmin || (item.delivered_by === user.id && !isReadOnly)) && <button onClick={() => handleDeleteItem('deliveries', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>}
-                                                 </div>
-                                             </td>
-                                         </tr>
-                                     ))}
-                                     {dbView === 'hcps' && filterData(hcps).map((item: HCP) => (
-                                         <tr key={item.id} className="hover:bg-slate-50 group">
-                                             <td className="p-4 font-bold text-slate-900">{item.full_name}</td>
-                                             <td className="p-4 text-slate-600">{item.specialty}</td>
-                                             <td className="p-4 text-slate-600">{item.hospital}</td>
-                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">{!isReadOnly && <><button onClick={() => openEditModal('hcps', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('hcps', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></>}</div></td>
-                                         </tr>
-                                     ))}
-                                     {dbView === 'locations' && filterData(custodies).map((item: Custody) => (
-                                         <tr key={item.id} className="hover:bg-slate-50 group">
-                                             <td className="p-4 font-bold text-slate-900">{item.name}</td>
-                                             <td className="p-4 text-xs uppercase font-bold text-slate-500">{item.type}</td>
-                                             <td className="p-4 font-mono font-bold">{item.current_stock}</td>
-                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">{!isReadOnly && <><button onClick={() => openEditModal('locations', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('locations', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></>}</div></td>
-                                         </tr>
-                                     ))}
-                                     {dbView === 'stock' && filterData(visibleStock).map((item: StockTransaction) => (
-                                         <tr key={item.id} className="hover:bg-slate-50 group">
-                                             <td className="p-4 font-mono text-slate-500 text-xs">{formatDateFriendly(item.transaction_date)}</td>
-                                             <td className="p-4 text-xs font-bold text-slate-700">{resolveSourceText(item.source)}</td>
-                                             <td className={`p-4 font-mono font-bold text-center ${item.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{item.quantity > 0 ? '+' : ''}{item.quantity}</td>
-                                             <td className="p-4 text-right">
-                                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                     {!isReadOnly && item.custody_id !== repCustody?.id && item.quantity < 0 && <button onClick={() => handleRetrieveStock(item)} title="Retrieve Stock" className="p-1 text-orange-500 hover:bg-orange-50 rounded"><Undo2 className="w-4 h-4" /></button>}
-                                                     {!isReadOnly && <button onClick={() => openEditModal('tx', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>}
-                                                     {!isReadOnly && <button onClick={() => handleDeleteItem('tx', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>}
-                                                 </div>
-                                             </td>
-                                         </tr>
-                                     ))}
-                                     {dbView === 'patients' && filterData(patients).map((item: Patient) => (
-                                         <tr key={item.id} className="hover:bg-slate-50 group">
-                                             <td className="p-4 font-bold text-slate-900">{item.full_name}</td>
-                                             <td className="p-4 font-mono text-slate-600 text-xs">{item.national_id}</td>
-                                             <td className="p-4 font-mono text-slate-600 text-xs">{item.phone_number}</td>
-                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">{!isReadOnly && <><button onClick={() => openEditModal('patients', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('patients', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></>}</div></td>
-                                         </tr>
-                                     ))}
-                                     {/* Empty States */}
-                                     {dbView === 'deliveries' && visibleDeliveries.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-400 italic">No delivery records found.</td></tr>}
-                                     {dbView === 'stock' && visibleStock.length === 0 && <tr><td colSpan={4} className="p-8 text-center text-slate-400 italic">No stock history available.</td></tr>}
-                                 </tbody>
-                             </table>
-                         </div>
-                     </div>
-                 </div>
-             )
+          {activeTab === 'custody' && (
+              !user ? (
+                 <LockedState title="Inventory Locked" description="Secure inventory management requires authentication." loginRequired />
+              ) : (
+                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
+                    
+                    {/* HIERARCHY INVENTORY VIEW */}
+                    {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && renderTeamInventory()}
+
+                    {/* PERSONAL INVENTORY VIEW */}
+                    {canManageStock && (
+                    <>
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                        <div className="flex justify-between items-center mb-6">
+                            <div>
+                                <h3 className="text-xl font-bold text-slate-900">My Inventory</h3>
+                                <p className="text-slate-500 text-sm">Personal Stock Management</p>
+                            </div>
+                            <div className="text-right">
+                                <span className="text-4xl font-black text-slate-900">{repCustody?.current_stock || 0}</span>
+                                <span className="block text-[10px] font-bold uppercase text-slate-400">Pens On Hand</span>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            {/* RECEIVE STOCK */}
+                            <div className="bg-slate-50 p-6 rounded border border-slate-100">
+                                <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase"><ArrowRight className="w-4 h-4 text-green-600" /> Receive Stock</h4>
+                                <form onSubmit={handleReceiveStock} className="space-y-3">
+                                    <input type="number" placeholder="Quantity" className="w-full p-2 border rounded text-sm" value={receiveForm.quantity || ''} onChange={e => setReceiveForm({...receiveForm, quantity: parseInt(e.target.value)})} />
+                                    <input type="text" placeholder="Source (e.g. Educator Name)" className="w-full p-2 border rounded text-sm" list="educator-suggestions" value={receiveForm.educatorName} onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})} />
+                                    <input type="date" className="w-full p-2 border rounded text-sm" value={receiveForm.date} onChange={e => setReceiveForm({...receiveForm, date: e.target.value})} />
+                                    <button type="submit" disabled={isSubmitting} className="w-full bg-green-600 text-white font-bold text-xs uppercase py-2 rounded hover:bg-green-700">Add to Stock</button>
+                                </form>
+                            </div>
+
+                            {/* TRANSFER STOCK */}
+                            <div className="bg-slate-50 p-6 rounded border border-slate-100">
+                                <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase"><ArrowLeftRight className="w-4 h-4 text-blue-600" /> Transfer Stock</h4>
+                                <form onSubmit={handleTransferStock} className="space-y-3">
+                                    <div className="flex gap-2">
+                                        <select className="w-full p-2 border rounded text-sm bg-white" value={transferForm.toCustodyId} onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})}>
+                                            <option value="">Select Location</option>
+                                            {custodies.filter(c => c.type === 'clinic').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                        <button type="button" onClick={() => setShowClinicModal(true)} className="bg-slate-200 px-2 rounded hover:bg-[#FFC600]"><Plus className="w-4 h-4"/></button>
+                                    </div>
+                                    <input type="number" placeholder="Quantity" className="w-full p-2 border rounded text-sm" value={transferForm.quantity || ''} onChange={e => setTransferForm({...transferForm, quantity: parseInt(e.target.value)})} />
+                                    <input type="date" className="w-full p-2 border rounded text-sm" value={transferForm.date} onChange={e => setTransferForm({...transferForm, date: e.target.value})} />
+                                    <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white font-bold text-xs uppercase py-2 rounded hover:bg-blue-700">Execute Transfer</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    </>
+                    )}
+                </div>
+              )
           )}
+
+          {activeTab === 'database' && (
+              !user ? (
+                  <LockedState title="Database Access Restricted" description="Authorized personnel only." loginRequired />
+              ) : (
+                  <div className="space-y-6 animate-in fade-in">
+                      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+                          <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0">
+                              <button onClick={() => setDbView('deliveries')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Deliveries</button>
+                              <button onClick={() => setDbView('hcps')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Doctors</button>
+                              <button onClick={() => setDbView('patients')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'patients' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Patients</button>
+                              <button onClick={() => setDbView('locations')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'locations' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Locations</button>
+                              <button onClick={() => setDbView('stock')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'stock' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Stock Log</button>
+                          </div>
+                          <div className="relative w-full md:w-64">
+                              <input type="text" placeholder="Search Database..." className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:border-[#FFC600]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          </div>
+                      </div>
+
+                      {/* FILTER BAR FOR DM/LM */}
+                      {renderDatabaseFilters()}
+
+                      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                          <div className="overflow-x-auto">
+                              <table className="w-full text-left">
+                                  <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 font-bold border-b border-slate-200">
+                                      <tr>
+                                          {/* DYNAMIC HEADER COLUMNS */}
+                                          {(isDM || isLM) && <th className="p-4 bg-yellow-50 text-yellow-800">Medical Rep</th>}
+                                          {isLM && <th className="p-4 bg-purple-50 text-purple-800">District Mgr</th>}
+
+                                          {dbView === 'deliveries' && <><th className="p-4">Date</th><th className="p-4">Product</th><th className="p-4">Patient</th><th className="p-4">Doctor</th></>}
+                                          {dbView === 'hcps' && <><th className="p-4">Name</th><th className="p-4">Specialty</th><th className="p-4">Hospital</th></>}
+                                          {dbView === 'patients' && <><th className="p-4">Name</th><th className="p-4">National ID</th><th className="p-4">Phone</th></>}
+                                          {dbView === 'locations' && <><th className="p-4">Name</th><th className="p-4">Type</th><th className="p-4 text-right">Stock</th></>}
+                                          {dbView === 'stock' && <><th className="p-4">Date</th><th className="p-4">Details</th><th className="p-4 text-right">Qty</th></>}
+                                          <th className="p-4 text-right">Actions</th>
+                                      </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 text-sm">
+                                      {filterData(dbView === 'deliveries' ? deliveries : dbView === 'hcps' ? hcps : dbView === 'patients' ? patients : dbView === 'locations' ? custodies : stockTransactions).map((row: any) => {
+                                          // Determine Owner ID for specific views to render MR/DM columns
+                                          let ownerId = null;
+                                          if (dbView === 'deliveries') ownerId = row.delivered_by;
+                                          else if (dbView === 'hcps' || dbView === 'patients') ownerId = row.created_by;
+                                          else if (dbView === 'locations') ownerId = row.owner_id; // Rep locations
+                                          else if (dbView === 'stock') {
+                                              const c = custodies.find(x => x.id === row.custody_id);
+                                              if (c && c.type === 'rep') ownerId = c.owner_id;
+                                          }
+
+                                          const { mrName, dmName } = getOwnerDetails(ownerId);
+
+                                          return (
+                                          <tr key={row.id} className="hover:bg-slate-50">
+                                              
+                                              {/* DYNAMIC ROW COLUMNS */}
+                                              {(isDM || isLM) && <td className="p-4 font-bold text-slate-700 bg-yellow-50/30 text-xs">{mrName}</td>}
+                                              {isLM && <td className="p-4 text-slate-600 bg-purple-50/30 text-xs">{dmName}</td>}
+
+                                              {dbView === 'deliveries' && (
+                                                  <>
+                                                      <td className="p-4 font-mono text-xs text-slate-500">{formatDateFriendly(row.delivery_date)}</td>
+                                                      <td className="p-4"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase border ${getProductStyles(row.product_id)}`}>{getProductName(row.product_id)}</span></td>
+                                                      <td className="p-4 font-medium">{row.patient?.full_name || 'Unknown'}</td>
+                                                      <td className="p-4 text-slate-500 text-xs">{row.hcp?.full_name || 'Unknown'}</td>
+                                                  </>
+                                              )}
+                                              {dbView === 'hcps' && (
+                                                  <>
+                                                      <td className="p-4 font-bold">{row.full_name}</td>
+                                                      <td className="p-4 text-slate-500">{row.specialty || '-'}</td>
+                                                      <td className="p-4 text-slate-500">{row.hospital}</td>
+                                                  </>
+                                              )}
+                                              {dbView === 'patients' && (
+                                                  <>
+                                                      <td className="p-4 font-bold">{row.full_name}</td>
+                                                      <td className="p-4 font-mono text-xs text-slate-500">{row.national_id}</td>
+                                                      <td className="p-4 text-slate-500">{row.phone_number}</td>
+                                                  </>
+                                              )}
+                                              {dbView === 'locations' && (
+                                                  <>
+                                                      <td className="p-4 font-bold">{row.name}</td>
+                                                      <td className="p-4"><span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${row.type === 'rep' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>{row.type}</span></td>
+                                                      <td className="p-4 text-right font-mono font-bold">{row.current_stock}</td>
+                                                  </>
+                                              )}
+                                              {dbView === 'stock' && (
+                                                  <>
+                                                      <td className="p-4 font-mono text-xs text-slate-500">{formatDateFriendly(row.transaction_date)}</td>
+                                                      <td className="p-4 text-xs">{resolveSourceText(row.source)}</td>
+                                                      <td className={`p-4 text-right font-mono font-bold ${row.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{row.quantity > 0 ? '+' : ''}{row.quantity}</td>
+                                                  </>
+                                              )}
+                                              
+                                              <td className="p-4 text-right">
+                                                  <div className="flex justify-end gap-2">
+                                                      {!isReadOnly && <button onClick={() => openEditModal(dbView, row)} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>}
+                                                      {dbView === 'stock' && canManageStock && row.quantity < 0 && (
+                                                          <button onClick={() => handleRetrieveStock(row)} className="text-slate-400 hover:text-blue-600" title="Retrieve Stock"><Undo2 className="w-4 h-4"/></button>
+                                                      )}
+                                                      {!isReadOnly && <button onClick={() => handleDeleteItem(dbView, row.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>}
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                      )})}
+                                  </tbody>
+                              </table>
+                          </div>
+                      </div>
+                  </div>
+              )
+          )}
+
           {activeTab === 'admin' && isAdmin && (
               <AdminPanel profiles={allProfiles} onUpdate={loadData} />
           )}
-          {activeTab === 'custody' && (
-             !user ? (
-                 <LockedState title="Inventory Locked" description="Authorized personnel only." />
-             ) : !canManageStock ? (
-                 <LockedState title="Read Only View" description="District & Line Managers do not manage personal stock." />
-             ) : (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
-                    <div className="bg-white shadow-sm border-t-4 border-[#FFC600]">
-                        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                            <div><h2 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Briefcase className="w-6 h-6 text-[#FFC600]" /> My Inventory</h2><p className="text-xs text-slate-500 mt-1 uppercase tracking-wide">Medical Rep Stock (You)</p></div>
-                            <div className="text-right"><span className="text-5xl font-black text-slate-900 tracking-tighter">{repCustody?.current_stock || 0}</span><span className="text-xs text-slate-500 block uppercase font-bold mt-1">Pens Available</span></div>
-                        </div>
-                        <div className="p-6 bg-slate-900 text-white flex flex-col md:flex-row gap-4 items-start">
-                            <div className="flex-1 w-full">
-                                <h3 className="font-bold text-white flex items-center gap-2"><Package className="w-4 h-4 text-[#FFC600]" /> Receive Pens</h3>
-                                <p className="text-xs text-slate-400 mb-3">Add stock received from Patient Educator.</p>
-                                <form onSubmit={handleReceiveStock} className="flex flex-wrap gap-3 items-end w-full">
-                                    <div className="flex-1 min-w-[150px]">
-                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Receive Date</label>
-                                        <input type="date" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" value={receiveForm.date} onChange={e => setReceiveForm({...receiveForm, date: e.target.value})} />
-                                    </div>
-                                    <div className="flex-1 min-w-[150px]">
-                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Source Educator</label>
-                                        <input type="text" required placeholder="Educator Name" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" value={receiveForm.educatorName} onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})} list="educator-suggestions" />
-                                        <datalist id="educator-suggestions">{educatorSuggestions.map((name, i) => <option key={i} value={name} />)}</datalist>
-                                    </div>
-                                    <div className="w-24">
-                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Qty Pens</label>
-                                        <input type="number" min="1" className="bg-slate-800 border border-slate-700 text-white text-sm p-2 rounded w-full" placeholder="0" value={receiveForm.quantity} onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})} />
-                                    </div>
-                                    <button type="submit" disabled={isSubmitting} className="bg-[#FFC600] text-black font-bold uppercase text-xs px-4 py-2.5 rounded hover:bg-yellow-400 whitespace-nowrap disabled:opacity-50 flex items-center gap-2">
-                                        Add to Stock
-                                    </button>
-                                </form>
-                            </div>
-                            <div className="w-full md:w-80 border-l border-slate-700 md:pl-4 mt-6 md:mt-0">
-                                <h4 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2"><History className="w-3 h-3" /> Recent Additions</h4>
-                                <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
-                                    {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).slice(0, 5).map(t => (
-                                        <div key={t.id} className="text-[10px] text-slate-300 flex justify-between items-center group">
-                                            <span>{formatDateFriendly(t.transaction_date)}</span>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[#FFC600] font-bold">+{t.quantity}</span>
-                                                <div className="flex gap-1">
-                                                    <button onClick={() => openEditModal('tx', t)} className="text-slate-500 hover:text-blue-400 transition-colors" title="Edit"><Pencil className="w-3 h-3" /></button>
-                                                    <button onClick={() => handleDeleteItem('tx', t.id)} className="text-slate-500 hover:text-red-500 transition-colors" title="Delete"><Trash2 className="w-3 h-3" /></button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {stockTransactions.filter(t => t.custody_id === repCustody?.id && t.quantity > 0).length === 0 && <p className="text-[10px] text-slate-500 italic">No recent additions.</p>}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    {/* ... Clinic and Transfer ... */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div className="lg:col-span-2 bg-white shadow-sm border border-slate-200">
-                            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                                <h3 className="font-bold text-slate-800 flex items-center gap-2"><Store className="w-5 h-5" /> Clinic / Pharmacy Network</h3>
-                                <div className="flex items-center gap-3"><button onClick={() => setShowClinicModal(true)} className="text-xs font-bold uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1"><Plus className="w-3 h-3" /> Add Clinic</button><span className="text-xs font-bold bg-slate-200 px-2 py-1 rounded text-slate-600">{custodies.filter(c => c.type === 'clinic').length} Locations</span></div>
-                            </div>
-                            <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto custom-scrollbar">
-                                {custodies.filter(c => c.type === 'clinic').map(clinic => {
-                                    const isPharmacy = clinic.name.toLowerCase().includes('pharmacy');
-                                    return (
-                                    <div key={clinic.id} className="p-5 hover:bg-slate-50 transition-colors group flex justify-between items-center">
-                                        <div>
-                                            <h4 className="font-bold text-slate-900 text-lg flex items-center gap-2">
-                                                {clinic.name}
-                                                {isPharmacy && <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200 font-bold uppercase">Pharmacy</span>}
-                                                {!isPharmacy && <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 font-bold uppercase">Clinic</span>}
-                                            </h4>
-                                            <div className="flex flex-col gap-1 mt-1">
-                                                <p className="text-xs text-slate-400">Registered: {formatDateFriendly(clinic.created_at)}</p>
-                                                <p className="text-xs text-slate-500 font-bold">Last Supplied: {getLastSupplyDate(clinic.id)}</p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-6">
-                                             <div className="text-right"><span className="block text-2xl font-black text-slate-900">{clinic.current_stock || 0}</span><span className="text-[10px] text-slate-400 uppercase font-bold">Pens</span></div>
-                                            <button onClick={() => { setTransferForm(prev => ({...prev, toCustodyId: clinic.id, educatorName: ''})); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }} className="opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white px-3 py-2 text-xs font-bold uppercase rounded flex items-center gap-1">Supply <ArrowRight className="w-3 h-3" /></button>
-                                        </div>
-                                    </div>
-                                )})}
-                                {custodies.filter(c => c.type === 'clinic').length === 0 && <div className="p-8 text-center text-slate-400 italic">No clinics registered yet.</div>}
-                            </div>
-                        </div>
 
-                        <div className="space-y-6">
-                            <div className="bg-white shadow-sm border-l-4 border-blue-500 p-6">
-                                <h3 className="text-sm font-bold mb-4 uppercase text-blue-900 flex items-center gap-2"><ArrowLeftRight className="w-4 h-4" /> Supply Clinic</h3>
-                                <form onSubmit={handleTransferStock} className="space-y-4">
-                                    <div>
-                                        <div className="flex justify-between items-end mb-1"><label className="block text-[10px] font-bold text-slate-400 uppercase">Destination</label><button type="button" onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div>
-                                        <select className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.toCustodyId} onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})} required><option value="">-- Select Clinic --</option>{custodies.filter(c => c.type === 'clinic').map(c => (<option key={c.id} value={c.id}>{c.name.toLowerCase().includes('pharmacy') ? c.name : `${c.name} (Clinic)`}</option>))}</select>
-                                    </div>
-                                    <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantity (Pens)</label><input type="number" min="1" className="w-full border p-2 bg-slate-50 text-sm font-bold" value={transferForm.quantity} onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})} /></div>
-                                    <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Supply Date</label><input type="date" className="w-full border p-2 bg-slate-50 text-sm" value={transferForm.date} onChange={e => setTransferForm({...transferForm, date: e.target.value})} /></div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Source of Stock</label>
-                                        <div className="flex flex-col gap-2"><label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer"><input type="radio" name="sourceType" checked={transferForm.sourceType === 'rep'} onChange={() => setTransferForm({...transferForm, sourceType: 'rep', educatorName: ''})} /><span className="text-xs font-bold">My Inventory (Rep)</span><span className="text-[10px] text-red-500 ml-auto font-bold">- Deduct</span></label></div>
-                                    </div>
-                                    <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white py-2 font-bold uppercase text-xs hover:bg-blue-700 flex items-center justify-center gap-2">
-                                        Confirm Transfer
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-             )
-          )}
         </main>
       </div>
       )}
-
-      <footer className="bg-white border-t border-slate-200 py-0.5 shrink-0 z-40 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] relative">
-        <div className="max-w-7xl mx-auto px-4 flex justify-between items-center h-6">
-            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-2">
-                <img src="icon.svg" className="w-4 h-4 rounded-sm border border-slate-300" alt="Logo" />
-                <span>SPIN v{METADATA.version}</span>
-            </div>
-            <div className="text-[10px] text-slate-400">
-                &copy; {new Date().getFullYear()} Supply Insulin Pen Network
-            </div>
-        </div>
-      </footer>
-
-      <AIReportModal isOpen={showAIModal} onClose={() => setShowAIModal(false)} deliveries={deliveries} userEmail={user?.email || ''} />
     </div>
   );
 };
-
-export default App;
