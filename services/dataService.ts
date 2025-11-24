@@ -16,22 +16,15 @@ const KEYS = {
 // Helper to cascade text updates (renaming)
 const updateHistoryText = async (oldText: string, newText: string) => {
     if (!oldText || !newText || oldText === newText) return;
-    
-    // We only attempt to replace reasonably long names to avoid replacing common substrings accidentally
     if (oldText.length < 3) return;
 
-    // Helper to safely replace text avoiding partial matches where possible
     const safeReplace = (source: string, find: string, replace: string) => {
         try {
-            // Escape special regex characters
             const escapedFind = find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // Attempt to match word boundaries if it looks like a name/word
             const regex = new RegExp(`\\b${escapedFind}\\b`, 'gi');
             if (regex.test(source)) {
                 return source.replace(regex, replace);
             }
-            // Fallback to simple replace if strict boundary check fails but string is present
-            // (e.g. if punctuation interferes)
             return source.split(find).join(replace);
         } catch (e) {
             return source.split(find).join(replace);
@@ -39,7 +32,6 @@ const updateHistoryText = async (oldText: string, newText: string) => {
     };
 
     if (isSupabaseConfigured() && supabase) {
-         // Get transactions that might contain the old text
          const { data: txs } = await supabase.from('stock_transactions')
             .select('*')
             .ilike('source', `%${oldText}%`)
@@ -159,14 +151,12 @@ export const dataService = {
     // Smart Rename: Update historical text references
     if (oldPatient && updates.full_name && oldPatient.full_name !== updates.full_name) {
         await updateHistoryText(oldPatient.full_name, updates.full_name);
-        // Also try to update if ID was used in text
         await updateHistoryText(id, updates.full_name); 
     }
   },
 
   async deletePatient(id: string): Promise<void> {
       if (isSupabaseConfigured() && supabase) {
-          // Cascade: Delete deliveries first
           await supabase.from('deliveries').delete().eq('patient_id', id); 
           await supabase.from('patients').delete().eq('id', id);
       } else {
@@ -253,7 +243,6 @@ export const dataService = {
   },
 
   // --- CUSTODY ---
-  // Using 'custodies' table for consistency with plural convention
   async getCustodies(): Promise<Custody[]> {
       if (isSupabaseConfigured() && supabase) {
           const { data, error } = await supabase.from('custodies').select('*').order('name');
@@ -318,7 +307,6 @@ export const dataService = {
 
   async deleteCustody(id: string): Promise<void> {
       if (isSupabaseConfigured() && supabase) {
-          // Cascade delete transactions and deliveries related to this custody
           await supabase.from('stock_transactions').delete().eq('custody_id', id);
           await supabase.from('deliveries').delete().eq('custody_id', id);
           await supabase.from('custodies').delete().eq('id', id);
@@ -342,7 +330,6 @@ export const dataService = {
       if (isSupabaseConfigured() && supabase) {
           const { data, error } = await supabase
               .from('deliveries')
-              // Note: Using 'custodies' alias for the join to match the table name change
               .select('*, patient:patients(*), hcp:hcps(*), custody:custodies(*)')
               .order('delivery_date', { ascending: false });
           if (error) throw error;
@@ -364,7 +351,6 @@ export const dataService = {
 
   async checkDuplicateDelivery(patientId: string, productId: string): Promise<boolean> {
       const deliveries = await this.getDeliveries();
-      // Simple logic: check if patient received SAME product in last 20 days
       const threshold = new Date();
       threshold.setDate(threshold.getDate() - 20);
       
@@ -376,8 +362,7 @@ export const dataService = {
   },
 
   async logDelivery(delivery: Omit<Delivery, 'id'>, userName: string): Promise<void> {
-      // 1. Deduct Stock using processStockTransaction (it handles custody update)
-      // Fixed: Removed manual updateCustody call to prevent double deduction
+      // 1. Deduct Stock
       if (delivery.custody_id) {
           await this.processStockTransaction(
               delivery.custody_id,
@@ -425,7 +410,6 @@ export const dataService = {
   },
 
   async deleteDelivery(id: string): Promise<void> {
-      // 1. Get the delivery details first
       let delivery: Delivery | null = null;
       if (isSupabaseConfigured() && supabase) {
           const { data } = await supabase.from('deliveries').select('*').eq('id', id).single();
@@ -435,28 +419,19 @@ export const dataService = {
           delivery = list.find((d: Delivery) => d.id === id);
       }
 
-      // 2. Restore Stock and Remove Transaction History
       if (delivery && delivery.custody_id) {
-          // A. Restore Stock to Custody
           const custodies = await this.getCustodies();
           const custody = custodies.find(c => c.id === delivery.custody_id);
           
           if (custody) {
-              // Add stock back (delivery was -1, so we add 1)
-              // But simpler: just use deleteStockTransaction on the deduction record which handles balance
-              
-              // Find the transaction first
               let txIdToDelete = null;
-              
               if (isSupabaseConfigured() && supabase) {
-                   // Search for a transaction: same custody, same negative qty, same date
                    const { data: txs } = await supabase.from('stock_transactions')
                       .select('*')
                       .eq('custody_id', custody.id)
                       .eq('quantity', -delivery.quantity)
                       .eq('transaction_date', delivery.delivery_date)
-                      .limit(1); // Take the first match
-                   
+                      .limit(1);
                    if (txs && txs.length > 0) {
                        txIdToDelete = txs[0].id;
                    }
@@ -473,13 +448,11 @@ export const dataService = {
               if (txIdToDelete) {
                   await this.deleteStockTransaction(txIdToDelete);
               } else {
-                  // Fallback if transaction missing: manual update
                   await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + delivery.quantity });
               }
           }
       }
 
-      // 3. Delete the Delivery Record
       if (isSupabaseConfigured() && supabase) {
           await supabase.from('deliveries').delete().eq('id', id);
       } else {
@@ -501,20 +474,16 @@ export const dataService = {
   },
 
   async processStockTransaction(custodyId: string, quantity: number, date: string, source: string, fromCustodyId?: string): Promise<void> {
-      // 1. Update Target Custody
       const custodies = await this.getCustodies();
       const target = custodies.find(c => c.id === custodyId);
       if (target) {
           await this.updateCustody(target.id, { current_stock: (target.current_stock || 0) + quantity });
       }
 
-      // 2. If transfer, deduct from source
       if (fromCustodyId) {
           const sourceCustody = custodies.find(c => c.id === fromCustodyId);
           if (sourceCustody) {
                await this.updateCustody(sourceCustody.id, { current_stock: (sourceCustody.current_stock || 0) - quantity });
-               
-               // Log deduction for source
                const deductionTx = {
                    custody_id: sourceCustody.id,
                    quantity: -quantity,
@@ -525,9 +494,6 @@ export const dataService = {
           }
       }
 
-      // 3. Log Addition for target
-      // If it's a transfer, the source text usually says "Transfer from [ID]"
-      // We will try to resolve the name here if we have it
       let finalSource = source;
       if (fromCustodyId) {
           const sourceName = custodies.find(c => c.id === fromCustodyId)?.name || fromCustodyId;
@@ -566,11 +532,9 @@ export const dataService = {
       }
   },
 
-  // IMPROVED DELETE: Safe deletion that restores balance
   async deleteStockTransaction(id: string): Promise<void> {
       let tx: StockTransaction | null = null;
       
-      // 1. Fetch transaction to get quantity and custody
       if (isSupabaseConfigured() && supabase) {
           const { data } = await supabase.from('stock_transactions').select('*').eq('id', id).single();
           tx = data;
@@ -579,19 +543,16 @@ export const dataService = {
           tx = list.find((t: StockTransaction) => t.id === id) || null;
       }
 
-      // 2. Reverse the stock impact
       if (tx) {
           const custodies = await this.getCustodies();
           const custody = custodies.find(c => c.id === tx!.custody_id);
           
           if (custody) {
-              // If tx.quantity was +10, we subtract 10. If -5, we add 5.
               const reverseQty = -1 * tx.quantity;
               await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + reverseQty });
           }
       }
 
-      // 3. Delete the record
       if (isSupabaseConfigured() && supabase) {
           await supabase.from('stock_transactions').delete().eq('id', id);
       } else {
