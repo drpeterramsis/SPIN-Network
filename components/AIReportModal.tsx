@@ -77,7 +77,7 @@ export const AIReportModal: React.FC<AIReportModalProps> = ({ isOpen, onClose, d
         {/* Header */}
         <div className="bg-black p-5 flex justify-between items-center">
           <div className="flex items-center gap-3 text-white">
-            <img src="/icon.svg" className="w-8 h-8 rounded border border-slate-800" alt="Logo" />
+            <div className="w-8 h-8 rounded border border-slate-800 bg-white flex items-center justify-center text-lg">🖊️</div>
             <h3 className="font-bold text-xl tracking-tight">SPIN Intelligence</h3>
           </div>
           <button onClick={onClose} className="text-white/60 hover:text-[#FFC600] transition-colors">

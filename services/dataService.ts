@@ -1,5 +1,3 @@
-
-
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS, UserProfile } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -256,7 +254,7 @@ export const dataService = {
           const stored = localStorage.getItem(KEYS.CUSTODY);
           if (!stored) {
              const mocks = [
-                { id: 'rep-main', name: 'My Rep Inventory', type: 'rep', created_at: new Date().toISOString(), current_stock: 50 },
+                { id: 'rep-main', name: 'My Rep Inventory', type: 'rep', created_at: new Date().toISOString(), current_stock: 50, owner_id: 'demo-user' },
                 { id: 'custody-2', name: 'City General Clinic', type: 'clinic', created_at: new Date().toISOString(), current_stock: 15 }
              ];
              localStorage.setItem(KEYS.CUSTODY, JSON.stringify(mocks));
@@ -266,9 +264,12 @@ export const dataService = {
       }
   },
 
-  async getRepCustody(): Promise<Custody | null> {
+  // FIXED: Now accepts userId to find SPECIFIC rep inventory
+  async getRepCustody(userId?: string): Promise<Custody | null> {
      const all = await this.getCustodies();
-     return all.find(c => c.type === 'rep') || null;
+     if (!userId) return null;
+     // Strict filtering by type and owner
+     return all.find(c => c.type === 'rep' && c.owner_id === userId) || null;
   },
 
   async createCustody(custody: Omit<Custody, 'id'|'current_stock'>): Promise<Custody> {

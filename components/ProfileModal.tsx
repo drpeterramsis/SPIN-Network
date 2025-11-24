@@ -72,7 +72,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, use
         {/* Header */}
         <div className="bg-black p-6 flex justify-between items-center">
             <div className="flex items-center gap-3">
-                 <img src="/icon.svg" className="w-8 h-8 rounded border border-slate-800" alt="Logo" />
+                 <div className="w-8 h-8 rounded border border-slate-800 bg-white flex items-center justify-center text-lg">🖊️</div>
                  <h3 className="text-white font-bold text-lg uppercase tracking-wider">User Profile</h3>
             </div>
             <button onClick={onClose} className="text-slate-400 hover:text-white">

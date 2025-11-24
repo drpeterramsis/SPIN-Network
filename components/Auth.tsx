@@ -210,9 +210,9 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
 
         {/* Header */}
         <div className="bg-black p-8 text-center relative overflow-hidden">
-          <div className="mx-auto w-16 h-16 mb-4 relative">
+          <div className="mx-auto w-16 h-16 mb-4 relative flex items-center justify-center">
              <div className="absolute inset-0 bg-[#FFC600] blur-xl opacity-20 rounded-full"></div>
-             <img src="/icon.svg" alt="Logo" className="w-full h-full relative z-10" />
+             <span className="text-5xl relative z-10 drop-shadow-lg">🖊️</span>
           </div>
           <h2 className="text-3xl font-black text-white tracking-tighter">SPIN ACCESS</h2>
           <p className="text-[#FFC600] mt-2 text-xs font-bold tracking-widest uppercase">

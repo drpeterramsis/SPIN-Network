@@ -40,7 +40,9 @@ import {
   ChevronDown,
   ChevronUp,
   Network,
-  Filter
+  Filter,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -55,8 +57,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.031",
-  version: "2.0.031"
+  name: "S.P.I.N v2.0.032",
+  version: "2.0.032"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -108,11 +110,11 @@ export const App: React.FC = () => {
   const [repCustody, setRepCustody] = useState<Custody | null>(null);
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
 
-  // const [showAIModal, setShowAIModal] = useState(false); // Hidden by request
   const [showProfileModal, setShowProfileModal] = useState(false);
   
   const [expandPrescribers, setExpandPrescribers] = useState(false);
   const [expandDeliveries, setExpandDeliveries] = useState(true);
+  const [expandAll, setExpandAll] = useState(false);
 
   // Database Filters (DM/LM)
   const [filterDmId, setFilterDmId] = useState<string>('all');
@@ -253,7 +255,9 @@ export const App: React.FC = () => {
       setUserProfile(currentProf || null);
 
       try {
-          const repC = await dataService.getRepCustody();
+          // Explicitly find rep custody for current user
+          const allC = await dataService.getCustodies();
+          const repC = allC.find(x => x.type === 'rep' && x.owner_id === user.id) || null;
           setRepCustody(repC);
       } catch (e) {
           console.error("Error loading Rep Custody", e);
@@ -285,7 +289,6 @@ export const App: React.FC = () => {
     }
   }, [user, loadData]);
 
-  // HIERARCHY FILTERING LOGIC
   const getVisibleDeliveries = () => {
       if (!userProfile) return [];
       if (userProfile.role === 'admin') return deliveries;
@@ -296,13 +299,13 @@ export const App: React.FC = () => {
 
       if (userProfile.role === 'dm') {
           const myMRs = allProfiles.filter(p => p.manager_id === user.id).map(p => p.id);
-          return deliveries.filter(d => myMRs.includes(d.delivered_by));
+          return deliveries.filter(d => myMRs.includes(d.delivered_by) || d.delivered_by === user.id);
       }
 
       if (userProfile.role === 'lm') {
           const myDMs = allProfiles.filter(p => p.manager_id === user.id).map(p => p.id);
           const myTeamMRs = allProfiles.filter(p => p.manager_id && myDMs.includes(p.manager_id)).map(p => p.id);
-          return deliveries.filter(d => myTeamMRs.includes(d.delivered_by));
+          return deliveries.filter(d => myTeamMRs.includes(d.delivered_by) || d.delivered_by === user.id);
       }
 
       return [];
@@ -310,13 +313,14 @@ export const App: React.FC = () => {
 
   const visibleDeliveries = getVisibleDeliveries();
 
-  // Helper to resolve Hierarchy Names
   const getOwnerDetails = (userId?: string) => {
       if (!userId) return { mrName: '-', dmName: '-' };
+      if (userId === user.id) return { mrName: 'Me', dmName: '-' };
+      
       const mr = allProfiles.find(p => p.id === userId);
       const dm = mr?.manager_id ? allProfiles.find(p => p.id === mr.manager_id) : null;
       return { 
-          mrName: mr?.full_name || 'Unknown', 
+          mrName: mr?.full_name || 'Unknown/Deleted', 
           dmName: dm?.full_name || '-' 
       };
   };
@@ -410,7 +414,7 @@ export const App: React.FC = () => {
       e.preventDefault();
       setIsSubmitting(true);
       try {
-        let targetRep = await dataService.getRepCustody();
+        let targetRep = await dataService.getRepCustody(user.id);
         if (!targetRep) {
             try {
                 targetRep = await dataService.createCustody({
@@ -422,7 +426,7 @@ export const App: React.FC = () => {
                 setRepCustody(targetRep);
                 setCustodies(prev => [...prev, targetRep!]);
             } catch (createErr) {
-                targetRep = await dataService.getRepCustody();
+                targetRep = await dataService.getRepCustody(user.id);
             }
         }
 
@@ -533,50 +537,31 @@ export const App: React.FC = () => {
   const renderTeamInventory = () => {
       if (userProfile?.role !== 'dm' && userProfile?.role !== 'lm') return null;
 
-      let teamMembers: UserProfile[] = [];
+      // DM View: Show direct MRs
       if (userProfile.role === 'dm') {
-          teamMembers = allProfiles.filter(p => p.role === 'mr' && p.manager_id === user.id);
-      } else {
-          const myDMs = allProfiles.filter(p => p.role === 'dm' && p.manager_id === user.id).map(p => p.id);
-          teamMembers = allProfiles.filter(p => p.role === 'mr' && p.manager_id && myDMs.includes(p.manager_id));
-      }
+          const teamMembers = allProfiles.filter(p => p.role === 'mr' && p.manager_id === user.id);
+          const teamCustodies = custodies.filter(c => c.type === 'rep' && teamMembers.map(m => m.id).includes(c.owner_id || ''));
+          const totalStock = teamCustodies.reduce((sum, c) => sum + (c.current_stock || 0), 0);
 
-      const teamCustodies = custodies.filter(c => c.type === 'rep' && teamMembers.map(m => m.id).includes(c.owner_id || ''));
-      const totalStock = teamCustodies.reduce((sum, c) => sum + (c.current_stock || 0), 0);
-
-      // Group by DM for LM view
-      const groupedData = userProfile.role === 'lm' 
-          ? teamMembers.reduce((acc, mr) => {
-              const dmId = mr.manager_id || 'unassigned';
-              if (!acc[dmId]) acc[dmId] = { dmName: allProfiles.find(p => p.id === dmId)?.full_name || 'Unassigned', mrs: [], total: 0 };
-              const stock = teamCustodies.find(c => c.owner_id === mr.id)?.current_stock || 0;
-              acc[dmId].mrs.push({ mr, stock });
-              acc[dmId].total += stock;
-              return acc;
-          }, {} as Record<string, any>)
-          : null;
-
-      return (
-          <div className="space-y-6">
-              <div className="bg-white p-6 shadow-sm border-l-4 border-blue-500 rounded-lg">
-                  <div className="flex justify-between items-center mb-4">
-                      <div>
-                          <h3 className="text-lg font-bold text-slate-900">Team Inventory Overview</h3>
-                          <p className="text-xs text-slate-500">{userProfile.role === 'lm' ? 'Regional' : 'District'} Stock Availability</p>
+          return (
+              <div className="space-y-6">
+                  <div className="bg-white p-6 shadow-sm border-l-4 border-blue-500 rounded-lg">
+                      <div className="flex justify-between items-center mb-4">
+                          <div>
+                              <h3 className="text-lg font-bold text-slate-900">District Inventory</h3>
+                              <p className="text-xs text-slate-500">Stock Breakdown by Medical Rep</p>
+                          </div>
+                          <div className="text-right">
+                              <span className="text-4xl font-black text-slate-900">{totalStock}</span>
+                              <span className="block text-[10px] font-bold uppercase text-slate-400">Total Pens</span>
+                          </div>
                       </div>
-                      <div className="text-right">
-                          <span className="text-4xl font-black text-slate-900">{totalStock}</span>
-                          <span className="block text-[10px] font-bold uppercase text-slate-400">Total Pens</span>
-                      </div>
-                  </div>
-                  
-                  {userProfile.role === 'dm' ? (
-                    <div className="overflow-x-auto">
+                      <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 font-bold">
                                 <tr>
                                     <th className="p-3">Medical Rep</th>
-                                    <th className="p-3 text-right">Available Stock</th>
+                                    <th className="p-3 text-right">Stock</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-sm">
@@ -594,31 +579,84 @@ export const App: React.FC = () => {
                             </tbody>
                         </table>
                     </div>
-                  ) : (
-                    <div className="space-y-4">
-                        {Object.values(groupedData || {}).map((group: any) => (
-                            <div key={group.dmName} className="border border-slate-200 rounded overflow-hidden">
-                                <div className="bg-slate-50 p-2 flex justify-between items-center border-b border-slate-100">
-                                    <span className="font-bold text-xs text-slate-700">{group.dmName} (DM)</span>
-                                    <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded">Subtotal: {group.total}</span>
+                  </div>
+              </div>
+          );
+      }
+
+      // LM View: Hierarchical Breakdown
+      if (userProfile.role === 'lm') {
+          const myDMs = allProfiles.filter(p => p.role === 'dm' && p.manager_id === user.id);
+          
+          // Compute tree
+          const data = myDMs.map(dm => {
+              const mrs = allProfiles.filter(p => p.role === 'mr' && p.manager_id === dm.id);
+              const mrStocks = mrs.map(mr => {
+                  const c = custodies.find(x => x.type === 'rep' && x.owner_id === mr.id);
+                  return {
+                      ...mr,
+                      stock: c?.current_stock || 0
+                  };
+              });
+              const dmTotal = mrStocks.reduce((sum, item) => sum + item.stock, 0);
+              return { dm, mrStocks, dmTotal };
+          });
+
+          const regionTotal = data.reduce((sum, group) => sum + group.dmTotal, 0);
+
+          return (
+               <div className="space-y-6">
+                  <div className="bg-white p-6 shadow-sm border-l-4 border-purple-500 rounded-lg">
+                      <div className="flex justify-between items-center mb-6">
+                          <div>
+                              <h3 className="text-lg font-bold text-slate-900">Regional Inventory</h3>
+                              <p className="text-xs text-slate-500">Breakdown by District</p>
+                          </div>
+                          <div className="text-right">
+                              <span className="text-4xl font-black text-slate-900">{regionTotal}</span>
+                              <span className="block text-[10px] font-bold uppercase text-slate-400">Total Pens</span>
+                          </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {data.map(group => (
+                            <div key={group.dm.id} className="border border-slate-200 rounded overflow-hidden">
+                                <div className="bg-slate-50 p-3 flex justify-between items-center border-b border-slate-200">
+                                    <div className="flex items-center gap-2">
+                                        <div className="bg-blue-100 p-1.5 rounded-full"><UserCircle className="w-4 h-4 text-blue-600"/></div>
+                                        <div>
+                                            <p className="font-bold text-sm text-slate-800">{group.dm.full_name}</p>
+                                            <p className="text-[10px] uppercase font-bold text-slate-400">District Manager</p>
+                                        </div>
+                                    </div>
+                                    <div className="bg-black text-[#FFC600] px-3 py-1 rounded text-xs font-bold">
+                                        Total: {group.dmTotal}
+                                    </div>
                                 </div>
                                 <table className="w-full text-left">
                                     <tbody className="divide-y divide-slate-50 text-xs">
-                                        {group.mrs.map((item: any) => (
-                                            <tr key={item.mr.id}>
-                                                <td className="p-2 pl-4 text-slate-600">{item.mr.full_name}</td>
-                                                <td className="p-2 text-right font-mono">{item.stock}</td>
+                                        {group.mrStocks.map((mr) => (
+                                            <tr key={mr.id}>
+                                                <td className="p-2 pl-4 text-slate-600 flex items-center gap-2">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
+                                                    {mr.full_name}
+                                                </td>
+                                                <td className="p-2 text-right font-mono font-bold text-slate-700">{mr.stock}</td>
                                             </tr>
                                         ))}
+                                        {group.mrStocks.length === 0 && (
+                                            <tr><td colSpan={2} className="p-3 text-center text-slate-400 italic">No Medical Reps assigned</td></tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
                         ))}
-                    </div>
-                  )}
+                      </div>
+                  </div>
               </div>
-          </div>
-      );
+          );
+      }
+      return null;
   };
 
   const checkEditDuplication = async () => {
@@ -743,7 +781,7 @@ export const App: React.FC = () => {
         let sourceLabel = `Educator: ${educatorName || 'Unknown'}`;
 
         if (sourceType === 'rep') {
-            let r = await dataService.getRepCustody();
+            let r = await dataService.getRepCustody(user.id);
             if (!r) {
                 try {
                     r = await dataService.createCustody({
@@ -755,7 +793,7 @@ export const App: React.FC = () => {
                     setRepCustody(r);
                     setCustodies(prev => [...prev, r!]);
                 } catch (createErr) {
-                    r = await dataService.getRepCustody();
+                    r = await dataService.getRepCustody(user.id);
                 }
             }
 
@@ -781,10 +819,13 @@ export const App: React.FC = () => {
     setIsSubmitting(true);
     try {
         const finalName = newClinicForm.isPharmacy ? `${newClinicForm.name} (Pharmacy)` : newClinicForm.name;
+        // Global clinics usually don't have an owner, or are owned by creator. 
+        // We set current user as owner so they can see it, but type 'clinic' usually implies shared.
         const created = await dataService.createCustody({
             name: finalName,
             type: 'clinic',
-            created_at: newClinicForm.date
+            created_at: newClinicForm.date,
+            owner_id: user.id // Tag with creator for visibility in strict mode
         });
         showToast("Location Registered", "success");
         setNewClinicForm({ name: '', date: getTodayString(), isPharmacy: false });
@@ -939,7 +980,7 @@ export const App: React.FC = () => {
   };
 
   const filterData = (data: any[]) => {
-      let d = getFilteredDatabaseData(data); // Apply Hierarchy Filter First
+      let d = getFilteredDatabaseData(data); 
       if (!searchTerm) return d;
       const lower = searchTerm.toLowerCase();
       return d.filter(item => {
@@ -996,65 +1037,13 @@ export const App: React.FC = () => {
     </div>
   );
 
-  const renderTeamStats = () => {
-      // (Implementation same as provided in last turn, kept for completeness)
-      if (userProfile?.role === 'dm') {
-          const myMrs = allProfiles.filter(p => p.manager_id === user.id);
-          const stats = myMrs.map(mr => {
-              const count = deliveries.filter(d => d.delivered_by === mr.id).length;
-              return { ...mr, count };
-          }).sort((a,b) => b.count - a.count);
-
-          return (
-              <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                      <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-bold">
-                          <tr><th className="p-3">Medical Representative</th><th className="p-3">Employee ID</th><th className="p-3 text-right">Deliveries</th></tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                          {stats.map(mr => (
-                              <tr key={mr.id}>
-                                  <td className="p-3 font-bold text-slate-700">{mr.full_name}</td>
-                                  <td className="p-3 text-slate-500 font-mono text-xs">{mr.employee_id}</td>
-                                  <td className="p-3 text-right font-black">{mr.count}</td>
-                              </tr>
-                          ))}
-                      </tbody>
-                  </table>
-              </div>
-          );
-      }
-      if (userProfile?.role === 'lm') {
-           const myDms = allProfiles.filter(p => p.manager_id === user.id);
-           const tree = myDms.map(dm => {
-               const dmMrs = allProfiles.filter(p => p.manager_id === dm.id);
-               const mrStats = dmMrs.map(mr => ({
-                   ...mr,
-                   count: deliveries.filter(d => d.delivered_by === mr.id).length
-               }));
-               const total = mrStats.reduce((sum, item) => sum + item.count, 0);
-               return { dm, mrStats, total };
-           }).sort((a,b) => b.total - a.total);
-           return (
-               <div className="space-y-4">
-                   {tree.map(node => (
-                       <div key={node.dm.id} className="border border-slate-200 rounded-lg overflow-hidden">
-                           <div className="bg-slate-50 p-3 flex justify-between items-center border-b border-slate-100">
-                               <div><h4 className="font-bold text-slate-800 text-sm">{node.dm.full_name} <span className="text-xs font-normal text-slate-500">(DM)</span></h4><p className="text-[10px] text-slate-400 uppercase font-bold">{node.mrStats.length} MRs Assigned</p></div>
-                               <div className="bg-black text-[#FFC600] px-3 py-1 rounded text-xs font-black">{node.total}</div>
-                           </div>
-                           <div className="divide-y divide-slate-50">
-                               {node.mrStats.map(mr => (<div key={mr.id} className="p-2 pl-4 flex justify-between items-center text-xs hover:bg-slate-50"><span className="text-slate-600 font-medium">{mr.full_name}</span><span className="font-mono text-slate-400">{mr.count}</span></div>))}
-                           </div>
-                       </div>
-                   ))}
-               </div>
-           );
-      }
-      return null;
-  };
-
   const getProductName = (id: string) => PRODUCTS.find(p => p.id === id)?.name || id;
+
+  const handleToggleAll = () => {
+    setExpandAll(!expandAll);
+    setExpandDeliveries(!expandAll);
+    setExpandPrescribers(!expandAll);
+  };
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-black text-[#FFC600]"><Activity className="animate-spin w-10 h-10" /></div>;
 
@@ -1063,7 +1052,7 @@ export const App: React.FC = () => {
   const isAdmin = userProfile?.role === 'admin';
   const isDM = userProfile?.role === 'dm';
   const isLM = userProfile?.role === 'lm';
-  const isReadOnly = isDM || isLM; // Fix for undefined variable
+  const isReadOnly = isDM || isLM; 
 
   return (
     <div className="h-screen bg-slate-100 flex flex-col font-sans overflow-hidden relative">
@@ -1084,7 +1073,7 @@ export const App: React.FC = () => {
       {installPrompt && (
           <div className="bg-black text-white p-3 flex justify-between items-center z-50 sticky top-0 shadow-lg">
               <div className="flex items-center gap-3">
-                  <img src="icon.svg" className="w-8 h-8 rounded border border-slate-700" alt="Icon" />
+                  <div className="w-8 h-8 rounded border border-slate-700 bg-white flex items-center justify-center text-lg">🖊️</div>
                   <div className="text-xs">
                       <p className="font-bold text-[#FFC600]">INSTALL S.P.I.N</p>
                       <p className="text-slate-400">Add Supply Network to your home screen.</p>
@@ -1208,7 +1197,7 @@ export const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center gap-3">
-              <img src="icon.svg" className="w-10 h-10 rounded-lg border-2 border-[#FFC600]" alt="SPIN Logo" />
+              <div className="w-10 h-10 rounded-lg border-2 border-[#FFC600] flex items-center justify-center bg-slate-900 text-2xl">🖊️</div>
               <div className="flex flex-col">
                 <span className="font-black text-2xl leading-none tracking-tighter">S.P.I.N</span>
                 <span className="text-[10px] font-bold text-[#FFC600] uppercase tracking-widest">Supply Insulin Pen Network</span>
@@ -1247,442 +1236,512 @@ export const App: React.FC = () => {
             <button onClick={() => setActiveTab('custody')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'custody' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Building2 className="w-4 h-4" /> Custody {!user && <Lock className="w-3 h-3 ml-1 opacity-50" />}</button>
             <button onClick={() => setActiveTab('database')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'database' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Database className="w-4 h-4" /> Database {!user && <Lock className="w-3 h-3 ml-1 opacity-50" />}</button>
             {isAdmin && (
-                <button onClick={() => setActiveTab('admin')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'admin' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><ShieldCheck className="w-4 h-4" /> Admin Panel</button>
+                <button onClick={() => setActiveTab('admin')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'admin' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>Admin Panel</button>
             )}
           </div>
 
-          {activeTab === 'dashboard' && (
-            <div className="space-y-6">
-              {!user ? (
-                  <div className="space-y-8">
-                      <div className="bg-white border-l-8 border-[#FFC600] p-8 shadow-lg">
-                          <h2 className="text-4xl font-black text-slate-900 mb-4">Welcome to S.P.I.N</h2>
-                          <p className="text-lg text-slate-600 max-w-3xl">The <strong>Supply Insulin Pen Network</strong> is an advanced tracking and verification system designed to ensure the secure, efficient, and traceable distribution of insulin pens to patients.</p>
-                      </div>
-                      <div className="text-center pt-10"><button onClick={() => setShowLoginModal(true)} className="bg-black text-white hover:bg-slate-800 px-8 py-4 font-bold uppercase tracking-wide shadow-lg transition-all">Access Dashboard</button></div>
-                  </div>
-              ) : (
-                  <>
-                      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500 flex justify-between items-end">
-                        <div>
-                            <h1 className="text-2xl font-bold text-slate-900">Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}</h1>
-                            <p className="text-slate-500 text-sm">Here is your daily distribution overview.</p>
-                        </div>
-                        <button onClick={() => setActiveTab('analytics')} className="hidden md:flex items-center gap-2 bg-[#FFC600] hover:bg-yellow-400 text-black px-5 py-2.5 font-bold uppercase text-xs tracking-wider transition-colors shadow-lg">
-                            <BarChart3 className="w-4 h-4" /> Full Analytics
-                        </button>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        
-                        {canManageStock && (
-                            <div onClick={() => { setActiveTab('custody'); }} className="bg-white p-6 shadow-sm border-l-4 border-blue-500 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 cursor-pointer hover:bg-blue-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">My Inventory</p><h3 className="text-3xl font-black text-slate-900">{repCustody?.current_stock || 0}</h3></div><div className="bg-blue-50 p-3 rounded-full group-hover:bg-blue-200 transition-colors"><Briefcase className="w-6 h-6 text-blue-600 group-hover:text-black" /></div></div>
-                        )}
-
-                        <div className="bg-white shadow-sm border-l-4 border-[#FFC600] animate-in slide-in-from-bottom-4 duration-500 delay-75 group flex flex-col relative overflow-hidden">
-                             <div className="p-6 cursor-pointer hover:bg-yellow-50 transition-colors" onClick={() => setExpandDeliveries(!expandDeliveries)}>
-                                <div className="flex items-center justify-between mb-2">
-                                    <div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Delivered</p><h3 className="text-3xl font-black text-slate-900">{visibleDeliveries.length}</h3></div>
-                                    <div className="bg-yellow-50 p-3 rounded-full group-hover:bg-[#FFC600] transition-colors"><Package className="w-6 h-6 text-[#FFC600] group-hover:text-black" /></div>
-                                </div>
-                                <div className="flex items-center gap-1 text-slate-400 text-[10px] font-bold uppercase">
-                                    <span>{expandDeliveries ? 'Hide' : 'Show'} Breakdown</span>
-                                    {expandDeliveries ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                </div>
+          {!user && activeTab !== 'dashboard' ? (
+              <LockedState title="Restricted Access" description="Please login to access the secure distribution network and patient data." loginRequired />
+          ) : (
+            <>
+                {activeTab === 'dashboard' && (
+                    <div className="space-y-6">
+                        <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
+                             <h2 className="text-xl font-bold text-slate-800">
+                                 {userProfile?.role === 'mr' ? `Territory Dashboard: ${userProfile.full_name}` : 
+                                  userProfile?.role === 'dm' ? `District Dashboard: ${userProfile.full_name}` : 
+                                  userProfile?.role === 'lm' ? `Regional Dashboard: ${userProfile.full_name}` : 
+                                  'Network Dashboard'}
+                             </h2>
+                             <div className="flex items-center gap-2">
+                                <button onClick={() => setActiveTab('analytics')} className="flex items-center gap-2 text-xs font-bold uppercase bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded transition-colors">
+                                    <BarChart3 className="w-4 h-4" /> View Full Analytics
+                                </button>
+                                <button onClick={handleToggleAll} className="flex items-center gap-2 text-xs font-bold uppercase bg-slate-50 text-slate-600 hover:bg-slate-100 px-4 py-2 rounded transition-colors" title={expandAll ? "Collapse All" : "Expand All"}>
+                                    {expandAll ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                                </button>
                              </div>
-                             
-                             {expandDeliveries && (
-                                 <div className="bg-slate-50 p-4 border-t border-slate-100 animate-in slide-in-from-top-2">
-                                     <div className="h-[150px] w-full">
-                                         <ResponsiveContainer width="100%" height="100%">
-                                             <RechartsPieChart>
-                                                 <Pie data={productBreakdown} cx="50%" cy="50%" innerRadius={30} outerRadius={50} paddingAngle={2} dataKey="value">
-                                                     {productBreakdown.map((entry, index) => (
-                                                         <Cell key={`cell-${index}`} fill={PRODUCT_COLOR_MAP[entry.id] || COLORS[index % COLORS.length]} />
-                                                     ))}
-                                                 </Pie>
-                                                 <RechartsTooltip 
-                                                    contentStyle={{backgroundColor: 'black', color: 'white', fontSize: '10px', borderRadius: '4px', border: 'none'}} 
-                                                    itemStyle={{color: '#FFC600'}}
-                                                    formatter={(value: any, name: any, props: any) => [`${value} (${props.payload.percentage}%)`, name]}
-                                                 />
-                                             </RechartsPieChart>
-                                         </ResponsiveContainer>
-                                     </div>
-                                 </div>
-                             )}
                         </div>
-                        
-                        <div className="bg-white shadow-sm border-l-4 border-slate-800 animate-in slide-in-from-bottom-4 duration-500 delay-100 group flex flex-col relative overflow-hidden">
-                            <div className="p-6 cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => setExpandPrescribers(!expandPrescribers)}>
-                                <div className="flex items-center justify-between mb-2">
-                                    <div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Prescribers</p><h3 className="text-3xl font-black text-slate-900">{uniquePrescribersCount}</h3></div>
-                                    <div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200 transition-colors"><Stethoscope className="w-6 h-6 text-slate-900" /></div>
+
+                        {/* Summary Cards */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-[#FFC600] relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
+                                <div className="relative z-10">
+                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Deliveries</p>
+                                    <h3 className="text-3xl font-black text-slate-900">{visibleDeliveries.length}</h3>
                                 </div>
-                                <div className="flex items-center gap-1 text-slate-400 text-[10px] font-bold uppercase">
-                                    <span>{expandPrescribers ? 'Hide' : 'Show'} Top 5</span>
-                                    {expandPrescribers ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                </div>
+                                <Syringe className="absolute right-4 bottom-4 w-12 h-12 text-[#FFC600] opacity-10 group-hover:scale-110 transition-transform" />
                             </div>
-                            
-                            {expandPrescribers && (
-                                <div className="bg-slate-50 p-4 border-t border-slate-100 animate-in slide-in-from-top-2">
-                                    <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-3 border-b border-slate-200 pb-1">Top 5 Doctors (By Volume)</h4>
-                                    <ul className="space-y-2">
-                                        {topPrescribers.map((tp, i) => (
-                                            <li key={i} className="flex justify-between items-center text-xs">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="font-mono text-slate-400 text-[10px]">0{i+1}</span>
-                                                    <span className="font-bold text-slate-700 truncate max-w-[120px]">{tp.name}</span>
+                            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-slate-800 relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
+                                <div className="relative z-10">
+                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Prescribers</p>
+                                    <h3 className="text-3xl font-black text-slate-900">{uniquePrescribersCount}</h3>
+                                </div>
+                                <Stethoscope className="absolute right-4 bottom-4 w-12 h-12 text-slate-800 opacity-10 group-hover:scale-110 transition-transform" />
+                            </div>
+                            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-blue-500 relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
+                                <div className="relative z-10">
+                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">My Stock Level</p>
+                                    <h3 className="text-3xl font-black text-slate-900">{repCustody?.current_stock || 0}</h3>
+                                </div>
+                                <Package className="absolute right-4 bottom-4 w-12 h-12 text-blue-500 opacity-10 group-hover:scale-110 transition-transform" />
+                            </div>
+                             <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-green-500 relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
+                                <div className="relative z-10">
+                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">Unique Patients</p>
+                                    <h3 className="text-3xl font-black text-slate-900">{new Set(visibleDeliveries.map(d => d.patient_id)).size}</h3>
+                                </div>
+                                <Users className="absolute right-4 bottom-4 w-12 h-12 text-green-500 opacity-10 group-hover:scale-110 transition-transform" />
+                            </div>
+                        </div>
+
+                        {/* Recent Activity */}
+                        <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="p-4 border-b border-slate-100 flex justify-between items-center cursor-pointer bg-slate-50" onClick={() => setExpandDeliveries(!expandDeliveries)}>
+                                <h3 className="font-bold text-slate-800 flex items-center gap-2"><History className="w-4 h-4 text-[#FFC600]" /> Recent Deliveries</h3>
+                                {expandDeliveries ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                            </div>
+                            {expandDeliveries && (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-white text-xs uppercase text-slate-500 font-bold border-b border-slate-100">
+                                            <tr>
+                                                <th className="p-4">Date</th>
+                                                <th className="p-4">Prescriber</th>
+                                                <th className="p-4">Product</th>
+                                                <th className="p-4">Patient</th>
+                                                <th className="p-4">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {visibleDeliveries.slice(0, 5).map(d => (
+                                                <tr key={d.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="p-4 font-mono text-xs text-slate-500">{formatDateFriendly(d.delivery_date)}</td>
+                                                    <td className="p-4 font-bold text-slate-700">{d.hcp?.full_name}</td>
+                                                    <td className="p-4">
+                                                        <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded border ${getProductStyles(d.product_id)}`}>
+                                                            {getProductName(d.product_id)}
+                                                        </span>
+                                                    </td>
+                                                    <td className="p-4 text-slate-600">***{d.patient?.national_id.slice(-4)}</td>
+                                                    <td className="p-4"><span className="flex items-center gap-1 text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded w-fit"><CheckCircle className="w-3 h-3" /> COMPLETED</span></td>
+                                                </tr>
+                                            ))}
+                                            {visibleDeliveries.length === 0 && (
+                                                <tr><td colSpan={5} className="p-8 text-center text-slate-400 italic">No recent delivery records found.</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'custody' && (
+                    <div className="space-y-8">
+                         {renderTeamInventory()}
+
+                         {(userProfile?.role === 'mr' || userProfile?.role === 'admin') && (
+                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <div className="space-y-6">
+                                    <div className="bg-white p-6 rounded-lg shadow-sm border-t-4 border-blue-500">
+                                        <div className="flex justify-between items-start mb-6">
+                                            <div>
+                                                <h3 className="text-xl font-bold text-slate-900">My Inventory</h3>
+                                                <p className="text-xs text-slate-500">Current Stock Level</p>
+                                            </div>
+                                            <div className="bg-blue-50 p-2 rounded-lg">
+                                                <Package className="w-8 h-8 text-blue-500" />
+                                            </div>
+                                        </div>
+                                        <div className="flex items-baseline gap-2 mb-8">
+                                            <span className="text-5xl font-black text-slate-900">{repCustody?.current_stock || 0}</span>
+                                            <span className="text-sm font-bold text-slate-400 uppercase">Pens Available</span>
+                                        </div>
+                                        
+                                        <form onSubmit={handleReceiveStock} className="bg-slate-50 p-4 rounded border border-slate-200 space-y-3">
+                                            <p className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Plus className="w-3 h-3" /> Add Stock from Educator</p>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input type="number" placeholder="Qty" className="w-full p-2 text-sm border rounded" value={receiveForm.quantity || ''} onChange={e => setReceiveForm({...receiveForm, quantity: parseInt(e.target.value)})} />
+                                                <input type="date" className="w-full p-2 text-sm border rounded" value={receiveForm.date} onChange={e => setReceiveForm({...receiveForm, date: e.target.value})} />
+                                            </div>
+                                            <input 
+                                                type="text" 
+                                                placeholder="Educator Name" 
+                                                className="w-full p-2 text-sm border rounded" 
+                                                value={receiveForm.educatorName} 
+                                                onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
+                                                list="educators"
+                                            />
+                                            <datalist id="educators">{educatorSuggestions.map((e,i) => <option key={i} value={e} />)}</datalist>
+                                            <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 text-xs uppercase rounded">Confirm Receipt</button>
+                                        </form>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-6">
+                                     <div className="bg-white p-6 rounded-lg shadow-sm border-t-4 border-[#FFC600]">
+                                        <div className="flex justify-between items-center mb-6">
+                                            <h3 className="text-xl font-bold text-slate-900">Supply Locations</h3>
+                                            <button onClick={() => setShowClinicModal(true)} className="text-xs font-bold uppercase bg-black text-[#FFC600] px-3 py-1.5 rounded hover:bg-slate-800 flex items-center gap-1"><Plus className="w-3 h-3"/> New Location</button>
+                                        </div>
+
+                                        <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                            {custodies.filter(c => c.type === 'clinic').map(clinic => (
+                                                <div key={clinic.id} className="p-4 border border-slate-200 rounded hover:border-[#FFC600] transition-colors bg-slate-50">
+                                                    <div className="flex justify-between items-center mb-2">
+                                                        <h4 className="font-bold text-slate-800">{clinic.name}</h4>
+                                                        <span className="bg-white px-2 py-1 rounded text-xs font-mono font-bold border shadow-sm">{clinic.current_stock || 0}</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-xs text-slate-500 mb-3">
+                                                        <span>Updated: {getLastSupplyDate(clinic.id)}</span>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="number" 
+                                                            className="w-20 p-1 border rounded text-xs" 
+                                                            placeholder="Qty" 
+                                                            id={`transfer-${clinic.id}`}
+                                                        />
+                                                        <button 
+                                                            onClick={() => {
+                                                                const el = document.getElementById(`transfer-${clinic.id}`) as HTMLInputElement;
+                                                                if(el.value) {
+                                                                    setTransferForm({
+                                                                        ...transferForm,
+                                                                        toCustodyId: clinic.id,
+                                                                        quantity: parseInt(el.value),
+                                                                        sourceType: 'rep'
+                                                                    });
+                                                                    // We need to trigger submit, but state update is async.
+                                                                    // For simplicity in this UI, let's just create a quick inline handler or modal. 
+                                                                    // Better: Populate the transfer form below or handle immediately.
+                                                                    // Let's modify the transfer form state and simulate a submit or just call the function.
+                                                                    if (window.confirm(`Transfer ${el.value} pens to ${clinic.name}?`)) {
+                                                                        dataService.processStockTransaction(clinic.id, parseInt(el.value), getTodayString(), 'Transfer from MR', repCustody?.id)
+                                                                            .then(() => { showToast("Transfer Successful", "success"); loadData(); el.value = ''; })
+                                                                            .catch(e => showToast(e.message, "error"));
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className="flex-1 bg-[#FFC600] hover:bg-yellow-400 text-black font-bold text-[10px] uppercase rounded py-1"
+                                                        >
+                                                            Supply
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                                <span className="bg-[#FFC600] text-black px-1.5 py-0.5 rounded text-[10px] font-bold">{tp.count}</span>
-                                            </li>
-                                        ))}
-                                        {topPrescribers.length === 0 && <li className="text-[10px] italic text-slate-400">No data available</li>}
-                                    </ul>
-                                </div>
-                            )}
-                        </div>
-
-                        <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Locations</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
-                      </div>
-
-                      {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && (
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mt-6 animate-in slide-in-from-bottom-6">
-                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                                <Network className="w-5 h-5 text-[#FFC600]" />
-                                {userProfile.role === 'lm' ? 'Regional Performance (Line Manager)' : 'Team Performance (District Manager)'}
-                            </h3>
-                            {renderTeamStats()}
-                        </div>
-                      )}
-                  </>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'deliver' && (
-             !user ? (
-                 <LockedState title="Delivery Access Restricted" description="Please login to access the delivery portal." loginRequired />
-             ) : !canDeliver ? (
-                 <LockedState title="Access Denied" description="Only Medical Representatives can dispense products." />
-             ) : (
-                <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
-                    <div className="flex items-center gap-4 border-b-2 border-slate-100 pb-4">
-                        <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 1 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>1</div>
-                        <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 2 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>2</div>
-                        <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 3 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>3</div>
-                        <div className="flex-1 text-right text-xs font-bold uppercase text-slate-400">
-                            {step === 1 ? 'Patient Search' : step === 2 ? 'Rx Details' : 'Confirmation'}
-                        </div>
-                    </div>
-
-                    {step === 1 && (
-                        <div className="bg-white p-8 rounded-xl shadow-lg border-t-4 border-[#FFC600]">
-                            <h2 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tight flex items-center gap-2"><Search className="w-5 h-5" /> Identify Patient</h2>
-                            <div className="flex gap-2 mb-6">
-                                <input 
-                                    type="text" 
-                                    value={nidSearch}
-                                    onChange={(e) => setNidSearch(e.target.value)} 
-                                    className="flex-1 px-4 py-3 border-2 border-slate-200 bg-slate-50 focus:bg-white focus:border-black outline-none font-bold text-lg transition-colors placeholder:font-normal"
-                                    placeholder="Enter National ID or Phone"
-                                />
-                                <button onClick={handlePatientSearch} className="bg-black text-white px-6 font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors">Search</button>
-                            </div>
-
-                            {hasSearched && !foundPatient && (
-                                <div className="bg-slate-50 p-6 rounded border border-slate-200 animate-in fade-in">
-                                    <div className="flex items-center gap-2 text-yellow-700 font-bold mb-4">
-                                        <AlertTriangle className="w-5 h-5" /> Patient Not Found
-                                    </div>
-                                    <div className="space-y-4">
-                                        <input type="text" placeholder="Full Name" className="w-full p-3 border border-slate-200 rounded" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} />
-                                        <input type="text" placeholder="Phone Number" className="w-full p-3 border border-slate-200 rounded" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} />
-                                        <button onClick={handleCreatePatient} className="w-full bg-[#FFC600] py-3 font-bold uppercase hover:bg-yellow-400 text-black">Register New Patient</button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {foundPatient && (
-                                <div className="bg-green-50 p-6 rounded border border-green-200 flex justify-between items-center animate-in fade-in">
-                                    <div>
-                                        <h3 className="font-bold text-green-900 text-lg">{foundPatient.full_name}</h3>
-                                        <p className="text-green-700 text-sm font-mono">{foundPatient.national_id}</p>
-                                    </div>
-                                    <button onClick={() => setStep(2)} className="bg-green-600 text-white px-6 py-2 rounded font-bold uppercase text-sm hover:bg-green-700 shadow-lg flex items-center gap-2">
-                                        Next Step <ArrowRight className="w-4 h-4" />
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {step === 2 && (
-                         <div className="bg-white p-8 rounded-xl shadow-lg border-t-4 border-[#FFC600]">
-                             <h2 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tight flex items-center gap-2"><Syringe className="w-5 h-5" /> Prescription Details</h2>
-                             
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Prescribing Doctor</label>
-                                    <div className="flex gap-2">
-                                        <select 
-                                            value={selectedHCP} 
-                                            onChange={(e) => setSelectedHCP(e.target.value)}
-                                            className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black"
-                                        >
-                                            <option value="">Select Doctor</option>
-                                            {hcps.map(h => <option key={h.id} value={h.id}>{h.full_name} ({h.hospital})</option>)}
-                                        </select>
-                                        <button onClick={() => setShowHCPModal(true)} className="bg-slate-200 px-3 hover:bg-[#FFC600] transition-colors"><Plus className="w-5 h-5" /></button>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Prescription Date</label>
-                                    <input type="date" className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black" value={rxDate} onChange={e => setRxDate(e.target.value)} />
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Product</label>
-                                    <div className="grid grid-cols-1 gap-2">
-                                        {PRODUCTS.map(p => (
-                                            <button 
-                                                key={p.id}
-                                                onClick={() => setSelectedProduct(p.id)}
-                                                className={`p-3 text-left border-2 rounded transition-all font-bold text-sm flex justify-between items-center ${selectedProduct === p.id ? getProductButtonStyles(p.id, true) : 'border-slate-100 bg-white text-slate-600 hover:border-slate-300'}`}
-                                            >
-                                                <span>{p.name}</span>
-                                                {selectedProduct === p.id && <CheckCircle className="w-4 h-4" />}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Educator Details</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Reported By (Educator Name)" 
-                                        className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black mb-3"
-                                        list="educator-list"
-                                        value={educatorName}
-                                        onChange={e => setEducatorName(e.target.value)}
-                                    />
-                                    <datalist id="educator-list">{educatorSuggestions.map((s,i) => <option key={i} value={s} />)}</datalist>
-                                    <input 
-                                        type="date" 
-                                        placeholder="Date Reported"
-                                        className="w-full p-3 border-2 border-slate-200 bg-slate-50 font-bold outline-none focus:border-black"
-                                        value={educatorDate}
-                                        onChange={e => setEducatorDate(e.target.value)}
-                                    />
+                                            ))}
+                                            {custodies.filter(c => c.type === 'clinic').length === 0 && (
+                                                <p className="text-center text-slate-400 italic text-sm py-8">No clinics or pharmacies registered yet.</p>
+                                            )}
+                                        </div>
+                                     </div>
                                 </div>
                              </div>
-
-                             {duplicateWarning && (
-                                 <div className="mt-6 bg-red-50 border-l-4 border-red-500 p-4 flex gap-3">
-                                     <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0" />
-                                     <div>
-                                         <h4 className="font-bold text-red-800 text-sm uppercase">Duplicate Warning</h4>
-                                         <p className="text-red-700 text-xs mt-1">This patient has received this specific product within the last 20 days. Please verify before proceeding.</p>
+                         )}
+                    </div>
+                )}
+                
+                {activeTab === 'deliver' && (
+                     <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="bg-black p-4 text-center">
+                            <h2 className="text-white font-bold uppercase tracking-wider flex items-center justify-center gap-2"><Syringe className="w-5 h-5 text-[#FFC600]" /> Record Delivery</h2>
+                        </div>
+                        
+                        <div className="p-6 md:p-8">
+                             {/* STEP 1: PATIENT ID */}
+                             {step === 1 && (
+                                 <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Patient National ID / Phone</label>
+                                     <div className="flex gap-2 mb-6">
+                                         <input 
+                                            type="text" 
+                                            value={nidSearch} 
+                                            onChange={e => setNidSearch(e.target.value)} 
+                                            className="flex-1 border-2 border-slate-200 p-4 rounded-lg text-lg font-mono focus:border-[#FFC600] outline-none transition-colors"
+                                            placeholder="Search ID..."
+                                            onKeyDown={e => e.key === 'Enter' && handlePatientSearch()}
+                                         />
+                                         <button onClick={handlePatientSearch} className="bg-black text-[#FFC600] px-6 rounded-lg font-bold uppercase hover:bg-slate-800 transition-colors"><Search className="w-6 h-6" /></button>
                                      </div>
+
+                                     {hasSearched && !foundPatient && (
+                                         <div className="bg-slate-50 p-6 rounded-lg border-2 border-dashed border-slate-300 text-center animate-in fade-in zoom-in">
+                                             <p className="text-slate-800 font-bold mb-4">Patient not found. Register new?</p>
+                                             <div className="space-y-3">
+                                                 <input type="text" placeholder="Full Name" className="w-full p-3 border rounded" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} />
+                                                 <input type="text" placeholder="Phone Number" className="w-full p-3 border rounded" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} />
+                                                 <button onClick={handleCreatePatient} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase rounded shadow-sm">Register & Continue</button>
+                                             </div>
+                                         </div>
+                                     )}
+
+                                     {foundPatient && (
+                                         <div className="bg-green-50 border border-green-200 p-4 rounded-lg flex justify-between items-center animate-in fade-in zoom-in">
+                                             <div>
+                                                 <p className="text-xs font-bold text-green-700 uppercase">Patient Verified</p>
+                                                 <p className="font-bold text-lg text-green-900">{foundPatient.full_name}</p>
+                                                 <p className="font-mono text-sm text-green-700">{foundPatient.national_id}</p>
+                                             </div>
+                                             <button onClick={() => setStep(2)} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded font-bold uppercase text-sm shadow-lg flex items-center gap-2">Next <ArrowRight className="w-4 h-4" /></button>
+                                         </div>
+                                     )}
                                  </div>
                              )}
 
-                             <div className="flex justify-between mt-8">
-                                 <button onClick={handleCancelDelivery} className="text-slate-400 hover:text-red-500 font-bold uppercase text-xs">Cancel Transaction</button>
-                                 <button onClick={handleSubmitDelivery} className="bg-black text-[#FFC600] px-8 py-3 font-bold uppercase tracking-wider hover:bg-slate-800 shadow-lg flex items-center gap-2">
-                                     Confirm Delivery <CheckCircle className="w-4 h-4" />
+                             {/* STEP 2: DETAILS */}
+                             {step === 2 && foundPatient && (
+                                 <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-300">
+                                     <div className="flex justify-between items-center pb-4 border-b border-slate-100">
+                                         <div>
+                                             <p className="text-xs font-bold text-slate-400 uppercase">Patient</p>
+                                             <p className="font-bold text-slate-900">{foundPatient.full_name}</p>
+                                         </div>
+                                         <button onClick={() => setStep(1)} className="text-xs font-bold text-slate-400 hover:text-black uppercase">Change</button>
+                                     </div>
+
+                                     <div>
+                                         <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Product</label>
+                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                             {PRODUCTS.map(p => (
+                                                 <button 
+                                                    key={p.id}
+                                                    onClick={() => { setSelectedProduct(p.id); dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }}
+                                                    className={`p-3 rounded border-2 text-left transition-all ${getProductButtonStyles(p.id, selectedProduct === p.id)}`}
+                                                 >
+                                                     <div className="font-bold text-sm mb-1">{p.name}</div>
+                                                     <div className="text-[10px] opacity-70 uppercase">{p.type}</div>
+                                                 </button>
+                                             ))}
+                                         </div>
+                                         {duplicateWarning && (
+                                             <div className="mt-2 bg-red-50 border border-red-200 p-3 rounded flex items-start gap-2">
+                                                 <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+                                                 <p className="text-xs text-red-700 font-medium"><strong>Duplicate Warning:</strong> This patient received this product recently. Please verify.</p>
+                                             </div>
+                                         )}
+                                     </div>
+
+                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                          <div>
+                                             <div className="flex justify-between mb-1">
+                                                 <label className="block text-xs font-bold text-slate-500 uppercase">Prescriber</label>
+                                                 <button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold text-blue-600 hover:underline uppercase">+ Add New</button>
+                                             </div>
+                                             <select className="w-full p-3 bg-white border rounded" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}>
+                                                 <option value="">-- Select Doctor --</option>
+                                                 {hcps.map(h => <option key={h.id} value={h.id}>{h.full_name} ({h.hospital})</option>)}
+                                             </select>
+                                          </div>
+                                          <div>
+                                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">RX Date (Prescription)</label>
+                                              <input type="date" className="w-full p-3 bg-white border rounded" value={rxDate} onChange={e => setRxDate(e.target.value)} />
+                                          </div>
+                                     </div>
+
+                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                         <div>
+                                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Reported Educator Name</label>
+                                              <input 
+                                                type="text" 
+                                                className="w-full p-3 bg-white border rounded" 
+                                                value={educatorName} 
+                                                onChange={e => setEducatorName(e.target.value)}
+                                                list="educators-list"
+                                                placeholder="e.g. Nurse Joy"
+                                              />
+                                              <datalist id="educators-list">{educatorSuggestions.map((e,i) => <option key={i} value={e} />)}</datalist>
+                                         </div>
+                                         <div>
+                                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Submission Date</label>
+                                              <input type="date" className="w-full p-3 bg-white border rounded" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} />
+                                         </div>
+                                     </div>
+
+                                     <div className="pt-4 border-t border-slate-100 flex gap-3">
+                                         <button onClick={handleCancelDelivery} className="flex-1 py-3 font-bold uppercase text-slate-500 hover:bg-slate-100 rounded">Cancel</button>
+                                         <button onClick={handleSubmitDelivery} disabled={isSubmitting} className="flex-1 bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase rounded shadow-lg flex items-center justify-center gap-2">
+                                             {isSubmitting ? <Loader2 className="animate-spin w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
+                                             Confirm Delivery
+                                         </button>
+                                     </div>
+                                 </div>
+                             )}
+                        </div>
+                     </div>
+                )}
+
+                {activeTab === 'database' && (
+                    <div className="space-y-4">
+                        <div className="flex flex-wrap gap-2 mb-4 bg-white p-2 rounded shadow-sm border border-slate-200">
+                             {['deliveries', 'hcps', 'locations', 'stock', 'patients'].map(v => (
+                                 <button 
+                                    key={v}
+                                    onClick={() => setDbView(v as DBView)}
+                                    className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-wider transition-all ${dbView === v ? 'bg-black text-[#FFC600]' : 'text-slate-500 hover:bg-slate-50'}`}
+                                 >
+                                     {v}
                                  </button>
-                             </div>
-                         </div>
-                    )}
-                </div>
-             )
-          )}
-
-          {activeTab === 'custody' && (
-              !user ? (
-                 <LockedState title="Inventory Locked" description="Secure inventory management requires authentication." loginRequired />
-              ) : (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
-                    
-                    {/* HIERARCHY INVENTORY VIEW */}
-                    {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && renderTeamInventory()}
-
-                    {/* PERSONAL INVENTORY VIEW */}
-                    {canManageStock && (
-                    <>
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <div className="flex justify-between items-center mb-6">
-                            <div>
-                                <h3 className="text-xl font-bold text-slate-900">My Inventory</h3>
-                                <p className="text-slate-500 text-sm">Personal Stock Management</p>
-                            </div>
-                            <div className="text-right">
-                                <span className="text-4xl font-black text-slate-900">{repCustody?.current_stock || 0}</span>
-                                <span className="block text-[10px] font-bold uppercase text-slate-400">Pens On Hand</span>
-                            </div>
+                             ))}
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            {/* RECEIVE STOCK */}
-                            <div className="bg-slate-50 p-6 rounded border border-slate-100">
-                                <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase"><ArrowRight className="w-4 h-4 text-green-600" /> Receive Stock</h4>
-                                <form onSubmit={handleReceiveStock} className="space-y-3">
-                                    <input type="number" placeholder="Quantity" className="w-full p-2 border rounded text-sm" value={receiveForm.quantity || ''} onChange={e => setReceiveForm({...receiveForm, quantity: parseInt(e.target.value)})} />
-                                    <input type="text" placeholder="Source (e.g. Educator Name)" className="w-full p-2 border rounded text-sm" list="educator-suggestions" value={receiveForm.educatorName} onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})} />
-                                    <input type="date" className="w-full p-2 border rounded text-sm" value={receiveForm.date} onChange={e => setReceiveForm({...receiveForm, date: e.target.value})} />
-                                    <button type="submit" disabled={isSubmitting} className="w-full bg-green-600 text-white font-bold text-xs uppercase py-2 rounded hover:bg-green-700">Add to Stock</button>
-                                </form>
-                            </div>
+                        {renderDatabaseFilters()}
 
-                            {/* TRANSFER STOCK */}
-                            <div className="bg-slate-50 p-6 rounded border border-slate-100">
-                                <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase"><ArrowLeftRight className="w-4 h-4 text-blue-600" /> Transfer Stock</h4>
-                                <form onSubmit={handleTransferStock} className="space-y-3">
-                                    <div className="flex gap-2">
-                                        <select className="w-full p-2 border rounded text-sm bg-white" value={transferForm.toCustodyId} onChange={e => setTransferForm({...transferForm, toCustodyId: e.target.value})}>
-                                            <option value="">Select Location</option>
-                                            {custodies.filter(c => c.type === 'clinic').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                        </select>
-                                        <button type="button" onClick={() => setShowClinicModal(true)} className="bg-slate-200 px-2 rounded hover:bg-[#FFC600]"><Plus className="w-4 h-4"/></button>
-                                    </div>
-                                    <input type="number" placeholder="Quantity" className="w-full p-2 border rounded text-sm" value={transferForm.quantity || ''} onChange={e => setTransferForm({...transferForm, quantity: parseInt(e.target.value)})} />
-                                    <input type="date" className="w-full p-2 border rounded text-sm" value={transferForm.date} onChange={e => setTransferForm({...transferForm, date: e.target.value})} />
-                                    <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white font-bold text-xs uppercase py-2 rounded hover:bg-blue-700">Execute Transfer</button>
-                                </form>
+                        <div className="relative mb-4">
+                            <input 
+                                type="text" 
+                                placeholder="Search records..." 
+                                className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg shadow-sm focus:border-[#FFC600] outline-none"
+                                value={searchTerm}
+                                onChange={e => setSearchTerm(e.target.value)}
+                            />
+                            <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm whitespace-nowrap">
+                                    <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-bold border-b border-slate-200">
+                                        <tr>
+                                            {dbView === 'deliveries' && (
+                                                <>
+                                                    <th className="p-4">Date</th>
+                                                    <th className="p-4">Patient</th>
+                                                    <th className="p-4">Product</th>
+                                                    <th className="p-4">Prescriber</th>
+                                                    <th className="p-4">MR / Owner</th>
+                                                    <th className="p-4 text-right">Actions</th>
+                                                </>
+                                            )}
+                                            {dbView === 'stock' && (
+                                                <>
+                                                    <th className="p-4">Date</th>
+                                                    <th className="p-4">Source / Note</th>
+                                                    <th className="p-4 text-right">Qty</th>
+                                                    <th className="p-4 text-right">Actions</th>
+                                                </>
+                                            )}
+                                            {dbView === 'hcps' && (
+                                                <>
+                                                    <th className="p-4">Name</th>
+                                                    <th className="p-4">Specialty</th>
+                                                    <th className="p-4">Hospital</th>
+                                                    <th className="p-4">Created By</th>
+                                                    <th className="p-4 text-right">Actions</th>
+                                                </>
+                                            )}
+                                            {dbView === 'locations' && (
+                                                <>
+                                                    <th className="p-4">Name</th>
+                                                    <th className="p-4">Type</th>
+                                                    <th className="p-4 text-right">Stock</th>
+                                                    <th className="p-4 text-right">Actions</th>
+                                                </>
+                                            )}
+                                            {dbView === 'patients' && (
+                                                <>
+                                                    <th className="p-4">Name</th>
+                                                    <th className="p-4">National ID</th>
+                                                    <th className="p-4">Phone</th>
+                                                    <th className="p-4">Created By</th>
+                                                    <th className="p-4 text-right">Actions</th>
+                                                </>
+                                            )}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {filterData(
+                                            dbView === 'deliveries' ? deliveries :
+                                            dbView === 'stock' ? stockTransactions :
+                                            dbView === 'hcps' ? hcps :
+                                            dbView === 'locations' ? custodies :
+                                            patients
+                                        ).map((item: any) => (
+                                            <tr key={item.id} className="hover:bg-slate-50">
+                                                {dbView === 'deliveries' && (
+                                                    <>
+                                                        <td className="p-4 text-slate-500 font-mono text-xs">{formatDateFriendly(item.delivery_date)}</td>
+                                                        <td className="p-4 font-bold text-slate-700">{item.patient?.full_name}</td>
+                                                        <td className="p-4"><span className={`text-[10px] font-bold uppercase px-2 py-1 rounded border ${getProductStyles(item.product_id)}`}>{getProductName(item.product_id)}</span></td>
+                                                        <td className="p-4 text-slate-600 text-xs">{item.hcp?.full_name}</td>
+                                                        <td className="p-4 text-slate-600 text-xs">{getOwnerDetails(item.delivered_by).mrName}</td>
+                                                        <td className="p-4 text-right">
+                                                            <button onClick={() => openEditModal('deliveries', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
+                                                            <button onClick={() => handleDeleteItem('deliveries', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
+                                                        </td>
+                                                    </>
+                                                )}
+                                                {dbView === 'stock' && (
+                                                    <>
+                                                        <td className="p-4 text-slate-500 font-mono text-xs">{formatDateFriendly(item.transaction_date)}</td>
+                                                        <td className="p-4 text-slate-700 text-xs max-w-xs truncate" title={item.source}>{resolveSourceText(item.source)}</td>
+                                                        <td className={`p-4 text-right font-mono font-bold ${item.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{item.quantity > 0 ? '+' : ''}{item.quantity}</td>
+                                                        <td className="p-4 text-right flex justify-end gap-2">
+                                                            {item.quantity < 0 && item.source && item.source.startsWith("Transfer to") && (
+                                                                <button onClick={() => handleRetrieveStock(item)} className="text-xs bg-slate-100 hover:bg-[#FFC600] p-1 rounded" title="Retrieve Stock"><Undo2 className="w-4 h-4" /></button>
+                                                            )}
+                                                            <button onClick={() => handleDeleteItem('stock', item.id)} className="text-red-500 hover:text-red-700 p-1"><Trash2 className="w-4 h-4" /></button>
+                                                        </td>
+                                                    </>
+                                                )}
+                                                {dbView === 'hcps' && (
+                                                    <>
+                                                        <td className="p-4 font-bold text-slate-700">{item.full_name}</td>
+                                                        <td className="p-4 text-slate-500 text-xs">{item.specialty}</td>
+                                                        <td className="p-4 text-slate-500 text-xs">{item.hospital}</td>
+                                                        <td className="p-4 text-slate-500 text-xs">{getOwnerDetails(item.created_by).mrName}</td>
+                                                        <td className="p-4 text-right">
+                                                            <button onClick={() => openEditModal('hcps', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
+                                                            <button onClick={() => handleDeleteItem('hcps', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
+                                                        </td>
+                                                    </>
+                                                )}
+                                                {dbView === 'locations' && (
+                                                    <>
+                                                        <td className="p-4 font-bold text-slate-700">{item.name}</td>
+                                                        <td className="p-4"><span className="text-[10px] uppercase font-bold bg-slate-100 px-2 py-1 rounded">{item.type}</span></td>
+                                                        <td className="p-4 text-right font-mono font-bold">{item.current_stock}</td>
+                                                        <td className="p-4 text-right">
+                                                            <button onClick={() => openEditModal('locations', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
+                                                            <button onClick={() => handleDeleteItem('locations', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
+                                                        </td>
+                                                    </>
+                                                )}
+                                                {dbView === 'patients' && (
+                                                    <>
+                                                        <td className="p-4 font-bold text-slate-700">{item.full_name}</td>
+                                                        <td className="p-4 font-mono text-xs text-slate-500">{item.national_id}</td>
+                                                        <td className="p-4 font-mono text-xs text-slate-500">{item.phone_number}</td>
+                                                        <td className="p-4 text-slate-500 text-xs">{getOwnerDetails(item.created_by).mrName}</td>
+                                                        <td className="p-4 text-right">
+                                                            <button onClick={() => openEditModal('patients', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
+                                                            <button onClick={() => handleDeleteItem('patients', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
+                                                        </td>
+                                                    </>
+                                                )}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
-                    </>
-                    )}
-                </div>
-              )
+                )}
+                
+                {activeTab === 'admin' && isAdmin && (
+                    <AdminPanel profiles={allProfiles} onUpdate={loadData} />
+                )}
+            </>
           )}
-
-          {activeTab === 'database' && (
-              !user ? (
-                  <LockedState title="Database Access Restricted" description="Authorized personnel only." loginRequired />
-              ) : (
-                  <div className="space-y-6 animate-in fade-in">
-                      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-                          <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0">
-                              <button onClick={() => setDbView('deliveries')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'deliveries' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Deliveries</button>
-                              <button onClick={() => setDbView('hcps')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'hcps' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Doctors</button>
-                              <button onClick={() => setDbView('patients')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'patients' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Patients</button>
-                              <button onClick={() => setDbView('locations')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'locations' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Locations</button>
-                              <button onClick={() => setDbView('stock')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === 'stock' ? 'bg-black text-[#FFC600]' : 'bg-slate-100 text-slate-500'}`}>Stock Log</button>
-                          </div>
-                          <div className="relative w-full md:w-64">
-                              <input type="text" placeholder="Search Database..." className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:border-[#FFC600]" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                          </div>
-                      </div>
-
-                      {/* FILTER BAR FOR DM/LM */}
-                      {renderDatabaseFilters()}
-
-                      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                          <div className="overflow-x-auto">
-                              <table className="w-full text-left">
-                                  <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 font-bold border-b border-slate-200">
-                                      <tr>
-                                          {/* DYNAMIC HEADER COLUMNS */}
-                                          {(isDM || isLM) && <th className="p-4 bg-yellow-50 text-yellow-800">Medical Rep</th>}
-                                          {isLM && <th className="p-4 bg-purple-50 text-purple-800">District Mgr</th>}
-
-                                          {dbView === 'deliveries' && <><th className="p-4">Date</th><th className="p-4">Product</th><th className="p-4">Patient</th><th className="p-4">Doctor</th></>}
-                                          {dbView === 'hcps' && <><th className="p-4">Name</th><th className="p-4">Specialty</th><th className="p-4">Hospital</th></>}
-                                          {dbView === 'patients' && <><th className="p-4">Name</th><th className="p-4">National ID</th><th className="p-4">Phone</th></>}
-                                          {dbView === 'locations' && <><th className="p-4">Name</th><th className="p-4">Type</th><th className="p-4 text-right">Stock</th></>}
-                                          {dbView === 'stock' && <><th className="p-4">Date</th><th className="p-4">Details</th><th className="p-4 text-right">Qty</th></>}
-                                          <th className="p-4 text-right">Actions</th>
-                                      </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100 text-sm">
-                                      {filterData(dbView === 'deliveries' ? deliveries : dbView === 'hcps' ? hcps : dbView === 'patients' ? patients : dbView === 'locations' ? custodies : stockTransactions).map((row: any) => {
-                                          // Determine Owner ID for specific views to render MR/DM columns
-                                          let ownerId = null;
-                                          if (dbView === 'deliveries') ownerId = row.delivered_by;
-                                          else if (dbView === 'hcps' || dbView === 'patients') ownerId = row.created_by;
-                                          else if (dbView === 'locations') ownerId = row.owner_id; // Rep locations
-                                          else if (dbView === 'stock') {
-                                              const c = custodies.find(x => x.id === row.custody_id);
-                                              if (c && c.type === 'rep') ownerId = c.owner_id;
-                                          }
-
-                                          const { mrName, dmName } = getOwnerDetails(ownerId);
-
-                                          return (
-                                          <tr key={row.id} className="hover:bg-slate-50">
-                                              
-                                              {/* DYNAMIC ROW COLUMNS */}
-                                              {(isDM || isLM) && <td className="p-4 font-bold text-slate-700 bg-yellow-50/30 text-xs">{mrName}</td>}
-                                              {isLM && <td className="p-4 text-slate-600 bg-purple-50/30 text-xs">{dmName}</td>}
-
-                                              {dbView === 'deliveries' && (
-                                                  <>
-                                                      <td className="p-4 font-mono text-xs text-slate-500">{formatDateFriendly(row.delivery_date)}</td>
-                                                      <td className="p-4"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase border ${getProductStyles(row.product_id)}`}>{getProductName(row.product_id)}</span></td>
-                                                      <td className="p-4 font-medium">{row.patient?.full_name || 'Unknown'}</td>
-                                                      <td className="p-4 text-slate-500 text-xs">{row.hcp?.full_name || 'Unknown'}</td>
-                                                  </>
-                                              )}
-                                              {dbView === 'hcps' && (
-                                                  <>
-                                                      <td className="p-4 font-bold">{row.full_name}</td>
-                                                      <td className="p-4 text-slate-500">{row.specialty || '-'}</td>
-                                                      <td className="p-4 text-slate-500">{row.hospital}</td>
-                                                  </>
-                                              )}
-                                              {dbView === 'patients' && (
-                                                  <>
-                                                      <td className="p-4 font-bold">{row.full_name}</td>
-                                                      <td className="p-4 font-mono text-xs text-slate-500">{row.national_id}</td>
-                                                      <td className="p-4 text-slate-500">{row.phone_number}</td>
-                                                  </>
-                                              )}
-                                              {dbView === 'locations' && (
-                                                  <>
-                                                      <td className="p-4 font-bold">{row.name}</td>
-                                                      <td className="p-4"><span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${row.type === 'rep' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>{row.type}</span></td>
-                                                      <td className="p-4 text-right font-mono font-bold">{row.current_stock}</td>
-                                                  </>
-                                              )}
-                                              {dbView === 'stock' && (
-                                                  <>
-                                                      <td className="p-4 font-mono text-xs text-slate-500">{formatDateFriendly(row.transaction_date)}</td>
-                                                      <td className="p-4 text-xs">{resolveSourceText(row.source)}</td>
-                                                      <td className={`p-4 text-right font-mono font-bold ${row.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{row.quantity > 0 ? '+' : ''}{row.quantity}</td>
-                                                  </>
-                                              )}
-                                              
-                                              <td className="p-4 text-right">
-                                                  <div className="flex justify-end gap-2">
-                                                      {!isReadOnly && <button onClick={() => openEditModal(dbView, row)} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>}
-                                                      {dbView === 'stock' && canManageStock && row.quantity < 0 && (
-                                                          <button onClick={() => handleRetrieveStock(row)} className="text-slate-400 hover:text-blue-600" title="Retrieve Stock"><Undo2 className="w-4 h-4"/></button>
-                                                      )}
-                                                      {!isReadOnly && <button onClick={() => handleDeleteItem(dbView, row.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>}
-                                                  </div>
-                                              </td>
-                                          </tr>
-                                      )})}
-                                  </tbody>
-                              </table>
-                          </div>
-                      </div>
-                  </div>
-              )
-          )}
-
-          {activeTab === 'admin' && isAdmin && (
-              <AdminPanel profiles={allProfiles} onUpdate={loadData} />
-          )}
-
         </main>
+        
+        {/* Footer */}
+        <footer className="bg-slate-900 text-slate-500 text-center p-6 text-xs border-t border-slate-800">
+            <p className="font-bold text-slate-400 mb-1">SPIN &copy; {new Date().getFullYear()}</p>
+            <p className="mb-2">Supply & Insulin Pen Network Management System</p>
+            <p className="font-mono text-[10px] opacity-50">v{METADATA.version}</p>
+        </footer>
       </div>
       )}
     </div>
