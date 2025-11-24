@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Auth } from './components/Auth';
 import { AdminPanel } from './components/AdminPanel';
@@ -57,8 +58,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.032",
-  version: "2.0.032"
+  name: "S.P.I.N v2.0.033",
+  version: "2.0.033"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -235,7 +236,6 @@ export const App: React.FC = () => {
       
       setDeliveries(d);
       setHcps(h);
-      setCustodies(c);
       setStockTransactions(s);
       setPatients(p);
       setAllProfiles(profs);
@@ -254,14 +254,24 @@ export const App: React.FC = () => {
       if (currentProf && !currentProf.role) currentProf.role = 'mr';
       setUserProfile(currentProf || null);
 
-      try {
-          // Explicitly find rep custody for current user
-          const allC = await dataService.getCustodies();
-          const repC = allC.find(x => x.type === 'rep' && x.owner_id === user.id) || null;
-          setRepCustody(repC);
-      } catch (e) {
-          console.error("Error loading Rep Custody", e);
+      // Ensure Rep Custody Exists
+      let repC = c.find(x => x.type === 'rep' && x.owner_id === user.id) || null;
+      
+      // Auto-create custody if missing for MR/Admin
+      if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
+          try {
+              repC = await dataService.ensureRepCustody(user.id);
+              // Update local list with new custody
+              if (repC) setCustodies([...c, repC]);
+              else setCustodies(c);
+          } catch (e) {
+              console.error("Failed to ensure custody", e);
+              setCustodies(c);
+          }
+      } else {
+          setCustodies(c);
       }
+      setRepCustody(repC);
 
       const educatorSet = new Set<string>();
       d.forEach(item => { if (item.educator_name) educatorSet.add(item.educator_name); });
@@ -376,13 +386,13 @@ export const App: React.FC = () => {
         const newP = await dataService.createPatient({
           national_id: nidSearch,
           full_name: newPatientForm.full_name,
-          phone_number: newPatientForm.phone_number,
+          phone_number: newPatientForm.phone_number || '',
           created_by: user.id
         });
         setFoundPatient(newP);
         showToast("New patient registered", "success");
-    } catch(e) {
-        showToast("Error creating patient", "error");
+    } catch(e: any) {
+        showToast(`Error creating patient: ${e.message || 'Unknown error'}`, "error");
     } finally {
         setIsSubmitting(false);
     }
@@ -416,18 +426,9 @@ export const App: React.FC = () => {
       try {
         let targetRep = await dataService.getRepCustody(user.id);
         if (!targetRep) {
-            try {
-                targetRep = await dataService.createCustody({
-                    name: 'My Rep Inventory',
-                    type: 'rep',
-                    created_at: new Date().toISOString(),
-                    owner_id: user.id
-                });
-                setRepCustody(targetRep);
-                setCustodies(prev => [...prev, targetRep!]);
-            } catch (createErr) {
-                targetRep = await dataService.getRepCustody(user.id);
-            }
+            targetRep = await dataService.ensureRepCustody(user.id);
+            setRepCustody(targetRep);
+            if(targetRep) setCustodies(prev => [...prev, targetRep!]);
         }
 
         if (!targetRep) throw new Error("My Inventory could not be found or initialized. Please refresh the page.");
@@ -783,18 +784,9 @@ export const App: React.FC = () => {
         if (sourceType === 'rep') {
             let r = await dataService.getRepCustody(user.id);
             if (!r) {
-                try {
-                    r = await dataService.createCustody({
-                        name: 'My Rep Inventory',
-                        type: 'rep',
-                        created_at: new Date().toISOString(),
-                        owner_id: user.id
-                    });
-                    setRepCustody(r);
-                    setCustodies(prev => [...prev, r!]);
-                } catch (createErr) {
-                    r = await dataService.getRepCustody(user.id);
-                }
+                 r = await dataService.ensureRepCustody(user.id);
+                 setRepCustody(r);
+                 if(r) setCustodies(prev => [...prev, r!]);
             }
 
             if (!r || !r.id) throw new Error("Rep custody not initialized.");
@@ -1226,7 +1218,7 @@ export const App: React.FC = () => {
       {/* Main Content Area */}
       {activeTab !== 'analytics' && (
       <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative flex flex-col">
-        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-full flex-grow">
+        <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow">
           
           <div className="flex space-x-1 bg-white p-1 rounded-xl shadow-sm border border-slate-200 mb-8 w-full md:w-auto inline-flex overflow-x-auto">
             <button onClick={() => setActiveTab('dashboard')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'dashboard' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LayoutDashboard className="w-4 h-4" /> Dashboard</button>

@@ -1,3 +1,4 @@
+
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS, UserProfile } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -270,6 +271,27 @@ export const dataService = {
      if (!userId) return null;
      // Strict filtering by type and owner
      return all.find(c => c.type === 'rep' && c.owner_id === userId) || null;
+  },
+
+  // NEW: Ensures a custody record exists for the rep. Creates one if missing.
+  async ensureRepCustody(userId: string): Promise<Custody> {
+      let custody = await this.getRepCustody(userId);
+      if (!custody) {
+          try {
+              custody = await this.createCustody({
+                  name: 'My Rep Inventory',
+                  type: 'rep',
+                  created_at: new Date().toISOString(),
+                  owner_id: userId
+              });
+          } catch (e) {
+              console.error("Error ensuring rep custody", e);
+              // Retry fetch in case of race condition
+              custody = await this.getRepCustody(userId);
+              if (!custody) throw e;
+          }
+      }
+      return custody;
   },
 
   async createCustody(custody: Omit<Custody, 'id'|'current_stock'>): Promise<Custody> {
