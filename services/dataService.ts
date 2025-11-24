@@ -1,6 +1,6 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS } from '../types';
+import { Patient, HCP, Delivery, Custody, StockTransaction, UserProfile } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
 // Local Storage Keys
@@ -9,7 +9,8 @@ const KEYS = {
   HCPS: 'spin_hcps',
   DELIVERIES: 'spin_deliveries',
   CUSTODY: 'spin_custody',
-  STOCK: 'spin_stock_transactions'
+  STOCK: 'spin_stock_transactions',
+  PROFILES: 'spin_profiles' // For local demo mode
 };
 
 // Helper to cascade text updates (renaming)
@@ -70,6 +71,33 @@ const updateHistoryText = async (oldText: string, newText: string) => {
 
 export const dataService = {
   
+  // --- PROFILES & HIERARCHY ---
+  async getAllProfiles(): Promise<UserProfile[]> {
+      if (isSupabaseConfigured() && supabase) {
+          const { data, error } = await supabase.from('profiles').select('*');
+          if (error) throw error;
+          return data as UserProfile[];
+      } else {
+          const stored = localStorage.getItem(KEYS.PROFILES);
+          if (!stored) return [];
+          return JSON.parse(stored);
+      }
+  },
+
+  async updateUserProfile(id: string, updates: Partial<UserProfile>): Promise<void> {
+      if (isSupabaseConfigured() && supabase) {
+          const { error } = await supabase.from('profiles').update(updates).eq('id', id);
+          if (error) throw error;
+      } else {
+          const list = JSON.parse(localStorage.getItem(KEYS.PROFILES) || '[]');
+          const idx = list.findIndex((p: UserProfile) => p.id === id);
+          if (idx >= 0) {
+              list[idx] = { ...list[idx], ...updates };
+              localStorage.setItem(KEYS.PROFILES, JSON.stringify(list));
+          }
+      }
+  },
+
   // --- PATIENTS ---
   async getPatients(): Promise<Patient[]> {
       if (isSupabaseConfigured() && supabase) {
