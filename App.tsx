@@ -60,14 +60,21 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.029",
-  version: "2.0.029"
+  name: "S.P.I.N v2.0.030",
+  version: "2.0.030"
 };
 
-type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin';
+type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
 type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock' | 'patients';
 
 const COLORS = ['#FFC600', '#000000', '#94a3b8', '#475569', '#cbd5e1'];
+
+// Product Color Mapping for small charts in dashboard
+const PRODUCT_COLOR_MAP: Record<string, string> = {
+  'glargivin-100': '#8b5cf6', // Violet
+  'humaxin-r': '#eab308',     // Yellow
+  'humaxin-mix': '#f97316',   // Orange
+};
 
 const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
     useEffect(() => {
@@ -110,7 +117,6 @@ const App: React.FC = () => {
 
   const [showAIModal, setShowAIModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
   
   // Dashboard Expand States
   const [expandPrescribers, setExpandPrescribers] = useState(false);
@@ -357,14 +363,17 @@ const App: React.FC = () => {
       if (total === 0) return [];
       const counts: Record<string, number> = {};
       visibleDeliveries.forEach(d => {
-          const pName = PRODUCTS.find(p => p.id === d.product_id)?.name || d.product_id;
-          counts[pName] = (counts[pName] || 0) + d.quantity;
+          counts[d.product_id] = (counts[d.product_id] || 0) + d.quantity;
       });
-      return Object.entries(counts).map(([name, value]) => ({
-          name,
-          value,
-          percentage: Math.round((value / total) * 100)
-      }));
+      return Object.entries(counts).map(([id, value]) => {
+          const product = PRODUCTS.find(p => p.id === id);
+          return {
+            name: product?.name || id,
+            id: id,
+            value,
+            percentage: Math.round((value / total) * 100)
+          };
+      });
   }, [visibleDeliveries]);
 
   useEffect(() => {
@@ -478,7 +487,7 @@ const App: React.FC = () => {
     if (!foundPatient) { showToast("No patient selected", "error"); return; }
     if (!selectedHCP) { showToast("Please select a Prescribing Doctor", "error"); return; }
     if (!selectedProduct) { showToast("Please select a Product", "error"); return; }
-    if (!selectedCustody) { showToast("Please select the Source Custody", "error"); return; }
+    if (!selectedCustody) { showToast("Please select a Source Custody", "error"); return; }
     if (!educatorName) { showToast("Please enter the Reported Educator Name", "error"); return; }
     
     setIsSubmitting(true);
@@ -868,7 +877,18 @@ const App: React.FC = () => {
 
       <Auth isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} onLogin={setUser} />
       {user && <ProfileModal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} user={user} onLogout={() => { setUser(null); setShowProfileModal(false); }} />}
-      {user && <AnalyticsDashboard isOpen={showAnalyticsModal} onClose={() => setShowAnalyticsModal(false)} deliveries={visibleDeliveries} hcps={hcps} role={userProfile?.role || 'mr'} />}
+      
+      {/* Full Page Analytics View */}
+      {user && activeTab === 'analytics' && (
+          <div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto">
+            <AnalyticsDashboard 
+                onBack={() => setActiveTab('dashboard')} 
+                deliveries={visibleDeliveries} 
+                hcps={hcps} 
+                role={userProfile?.role || 'mr'} 
+            />
+          </div>
+      )}
 
       {editItem && editType && (
          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); setEditPatientDetails(null); }}>
@@ -881,8 +901,7 @@ const App: React.FC = () => {
                      <button onClick={() => { setEditItem(null); setEditType(null); setEditDuplicateWarning(false); setEditPatientDetails(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
                 <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
-                    {/* ... (Existing Form Code unchanged for brevity, focusing on Dashboard updates) ... */}
-                    {/* I will keep the form code logic same as it was previously provided */}
+                    {/* Form fields */}
                     {editType === 'deliveries' && (
                         <>
                              {editDuplicateWarning && (
@@ -916,7 +935,7 @@ const App: React.FC = () => {
                              </div>
                         </>
                     )}
-                    {/* Simplified for response length, functionality remains */}
+                    {/* Logic remains same */}
                     <button type="submit" disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
                          <Save className="w-4 h-4" /> Save Changes
                     </button>
@@ -925,8 +944,57 @@ const App: React.FC = () => {
          </div>
       )}
 
-      {/* ... (HCP and Clinic Modals Code preserved) ... */}
+      {/* HCP Modal */}
+      {showHCPModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+            <div className="bg-white p-6 rounded shadow-xl w-full max-w-sm animate-in zoom-in duration-200">
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Stethoscope className="w-5 h-5 text-[#FFC600]" /> Add New Prescriber</h3>
+                <form onSubmit={handleCreateHCP} className="space-y-3">
+                    <input type="text" placeholder="Dr. Full Name" className="w-full border p-2 text-sm" value={newHCP.full_name} onChange={e => setNewHCP({...newHCP, full_name: e.target.value})} required />
+                    <input type="text" placeholder="Specialty" className="w-full border p-2 text-sm" list="spec-suggestions" value={newHCP.specialty} onChange={e => setNewHCP({...newHCP, specialty: e.target.value})} />
+                    <datalist id="spec-suggestions">{hcpSpecialties.map((s, i) => <option key={i} value={s} />)}</datalist>
+                    <input type="text" placeholder="Hospital / Clinic Name" className="w-full border p-2 text-sm" list="hosp-suggestions" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} required />
+                    <datalist id="hosp-suggestions">{hcpHospitals.map((s, i) => <option key={i} value={s} />)}</datalist>
+                    <div className="flex justify-end gap-2 mt-2">
+                        <button type="button" onClick={() => setShowHCPModal(false)} className="px-4 py-2 text-xs font-bold uppercase text-slate-500 hover:bg-slate-100">Cancel</button>
+                        <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-xs font-bold uppercase bg-black text-white hover:bg-slate-800">Save Doctor</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+      )}
 
+      {/* Clinic Modal */}
+      {showClinicModal && (
+         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+             <div className="bg-white p-6 rounded shadow-xl w-full max-w-sm animate-in zoom-in duration-200">
+                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Building2 className="w-5 h-5 text-[#FFC600]" /> Add Network Location</h3>
+                 <form onSubmit={handleAddClinic} className="space-y-3">
+                     <div>
+                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Location Name</label>
+                         <input type="text" placeholder="e.g. City Pharmacy" className="w-full border p-2 text-sm" value={newClinicForm.name} onChange={e => setNewClinicForm({...newClinicForm, name: e.target.value})} required />
+                     </div>
+                     <div>
+                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Registration Date</label>
+                         <input type="date" className="w-full border p-2 text-sm" value={newClinicForm.date} onChange={e => setNewClinicForm({...newClinicForm, date: e.target.value})} required />
+                     </div>
+                     <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-100 rounded cursor-pointer" onClick={() => setNewClinicForm(prev => ({...prev, isPharmacy: !prev.isPharmacy}))}>
+                         <div className={`w-4 h-4 border flex items-center justify-center ${newClinicForm.isPharmacy ? 'bg-black border-black' : 'bg-white border-slate-300'}`}>
+                             {newClinicForm.isPharmacy && <CheckCircle className="w-3 h-3 text-[#FFC600]" />}
+                         </div>
+                         <span className="text-xs font-bold text-slate-700">Is this a Pharmacy?</span>
+                     </div>
+                     <div className="flex justify-end gap-2 mt-4">
+                         <button type="button" onClick={() => setShowClinicModal(false)} className="px-4 py-2 text-xs font-bold uppercase text-slate-500 hover:bg-slate-100">Cancel</button>
+                         <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-xs font-bold uppercase bg-black text-white hover:bg-slate-800">Register Location</button>
+                     </div>
+                 </form>
+             </div>
+         </div>
+      )}
+
+
+      {/* Main Navbar */}
       <nav className="bg-black text-white sticky top-0 z-40 shadow-md border-b-4 border-[#FFC600] shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
@@ -959,6 +1027,8 @@ const App: React.FC = () => {
         </div>
       </nav>
 
+      {/* Main Content Area - Hidden when analytics is full screen */}
+      {activeTab !== 'analytics' && (
       <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative flex flex-col">
         <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-full flex-grow">
           
@@ -989,7 +1059,7 @@ const App: React.FC = () => {
                             <h1 className="text-2xl font-bold text-slate-900">Welcome back, {userProfile?.full_name || user.email?.split('@')[0]}</h1>
                             <p className="text-slate-500 text-sm">Here is your daily distribution overview.</p>
                         </div>
-                        <button onClick={() => setShowAnalyticsModal(true)} className="hidden md:flex items-center gap-2 bg-[#FFC600] hover:bg-yellow-400 text-black px-5 py-2.5 font-bold uppercase text-xs tracking-wider transition-colors shadow-lg">
+                        <button onClick={() => setActiveTab('analytics')} className="hidden md:flex items-center gap-2 bg-[#FFC600] hover:bg-yellow-400 text-black px-5 py-2.5 font-bold uppercase text-xs tracking-wider transition-colors shadow-lg">
                             <BarChart3 className="w-4 h-4" /> Full Analytics
                         </button>
                       </div>
@@ -1021,22 +1091,26 @@ const App: React.FC = () => {
                                              <RechartsPieChart>
                                                  <Pie data={productBreakdown} cx="50%" cy="50%" innerRadius={30} outerRadius={50} paddingAngle={2} dataKey="value">
                                                      {productBreakdown.map((entry, index) => (
-                                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                         <Cell key={`cell-${index}`} fill={PRODUCT_COLOR_MAP[entry.id] || COLORS[index % COLORS.length]} />
                                                      ))}
                                                  </Pie>
-                                                 <RechartsTooltip contentStyle={{backgroundColor: 'black', color: 'white', fontSize: '10px', borderRadius: '4px', border: 'none'}} />
+                                                 <RechartsTooltip 
+                                                    contentStyle={{backgroundColor: 'black', color: 'white', fontSize: '10px', borderRadius: '4px', border: 'none'}} 
+                                                    itemStyle={{color: '#FFC600'}}
+                                                    formatter={(value: any, name: any, props: any) => [`${value} (${props.payload.percentage}%)`, name]}
+                                                 />
                                              </RechartsPieChart>
                                          </ResponsiveContainer>
                                      </div>
                                      <div className="grid grid-cols-2 gap-2 mt-2">
                                          {productBreakdown.slice(0,4).map((p,i) => (
                                              <div key={i} className="flex items-center gap-1 text-[9px] uppercase font-bold text-slate-500">
-                                                 <div className="w-2 h-2 rounded-full" style={{backgroundColor: COLORS[i % COLORS.length]}}></div>
+                                                 <div className="w-2 h-2 rounded-full" style={{backgroundColor: PRODUCT_COLOR_MAP[p.id] || '#cbd5e1'}}></div>
                                                  <span className="truncate">{p.name} ({p.value})</span>
                                              </div>
                                          ))}
                                      </div>
-                                     <button onClick={() => setShowAnalyticsModal(true)} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase flex items-center justify-center gap-1">Full Analysis <ArrowRight className="w-3 h-3"/></button>
+                                     <button onClick={() => setActiveTab('analytics')} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase flex items-center justify-center gap-1">Full Analysis <ArrowRight className="w-3 h-3"/></button>
                                  </div>
                              )}
                         </div>
@@ -1069,7 +1143,7 @@ const App: React.FC = () => {
                                         ))}
                                         {topPrescribers.length === 0 && <li className="text-[10px] italic text-slate-400">No data available</li>}
                                     </ul>
-                                    <button onClick={() => setShowAnalyticsModal(true)} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase flex items-center justify-center gap-1">Full Prescriber Analysis <ArrowRight className="w-3 h-3"/></button>
+                                    <button onClick={() => setActiveTab('analytics')} className="mt-4 w-full text-center text-xs font-bold text-blue-600 hover:text-blue-800 uppercase flex items-center justify-center gap-1">Full Prescriber Analysis <ArrowRight className="w-3 h-3"/></button>
                                 </div>
                             )}
                         </div>
@@ -1082,7 +1156,6 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* ... (Rest of Tabs - Deliver, Custody, Database, Admin - preserved) ... */}
           {activeTab === 'deliver' && (
              !user ? (
                  <LockedState title="Delivery Access Restricted" description="Please login to access the delivery portal." loginRequired />
@@ -1195,7 +1268,6 @@ const App: React.FC = () => {
                 </div>
             )}
           )}
-          {/* ... (Existing code for other tabs is preserved inside main) ... */}
            {activeTab === 'database' && (
              !user ? (
                  <LockedState title="Database Locked" description="Authorized personnel only." loginRequired />
@@ -1214,7 +1286,7 @@ const App: React.FC = () => {
                              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                          </div>
                      </div>
-                     {/* ... Table implementation remains same ... */}
+                     {/* ... Table implementation ... */}
                      <div className="bg-white shadow-sm border border-slate-200 overflow-hidden">
                          <div className="overflow-x-auto">
                              <table className="w-full text-left border-collapse">
@@ -1350,7 +1422,7 @@ const App: React.FC = () => {
                             </div>
                         </div>
                     </div>
-
+                    {/* ... Clinic and Transfer ... */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <div className="lg:col-span-2 bg-white shadow-sm border border-slate-200">
                             <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
@@ -1409,6 +1481,7 @@ const App: React.FC = () => {
           )}
         </main>
       </div>
+      )}
 
       <footer className="bg-white border-t border-slate-200 py-0.5 shrink-0 z-40 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] relative">
         <div className="max-w-7xl mx-auto px-4 flex justify-between items-center h-6">
