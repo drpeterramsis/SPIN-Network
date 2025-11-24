@@ -60,6 +60,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
 
         if (isSignUp) {
             // 1. Sign Up
+            // We pass metadata, but we mainly rely on the profiles table for app logic
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email,
                 password,
@@ -72,7 +73,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                 }
             });
             if (authError) throw authError;
-            if (!authData.user) throw new Error("Registration failed");
+            if (!authData.user) throw new Error("Registration failed - No user returned");
 
             // 2. Determine Role & Access
             // If it's the hardcoded admin email, force Admin role and Yes access.
@@ -80,26 +81,34 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             const finalRole = isAdminEmail ? 'admin' : role;
             const finalAccess = isAdminEmail ? 'yes' : 'pending';
 
-            // 3. Create Profile with Role
-            // We use upsert to handle cases where a trigger might have created a partial profile
-            // or if the user is re-registering.
+            // 3. Create Profile in the 'profiles' table
+            // This ensures the user is actually inserted into the profiles table
             const { error: profileError } = await supabase.from('profiles').upsert([
                 {
                     id: authData.user.id,
                     full_name: fullName,
                     employee_id: employeeId,
-                    email: email,
+                    email: email, // Maps to 'email' in schema
                     role: finalRole,
-                    access: finalAccess
+                    access: finalAccess,
+                    manager_id: null 
                 }
-            ]);
+            ], { onConflict: 'id' });
 
             if (profileError) {
                 console.error("Profile creation error:", profileError);
-                // If profile creation failed but user is created, we are in a bad state. 
-                // However, Supabase Auth doesn't rollback. 
-                // We throw here so the user sees the error.
-                throw new Error("Registration succeeded but profile creation failed. Please contact admin.");
+                let msg = "Registration succeeded but profile creation failed. ";
+                if (profileError.message.includes("duplicate key")) {
+                    msg += "Employee ID or Email already linked to another profile.";
+                } else if (profileError.message.includes("policy")) {
+                    msg += "Database policy error. Please contact support.";
+                } else {
+                    msg += profileError.message;
+                }
+                // Don't throw here if the user was created, just warn
+                setError(msg);
+                setLoading(false);
+                return; 
             }
 
             if (isAdminEmail) {
@@ -115,13 +124,13 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             
             if (error) {
                 if (isAdminEmail && (error.message.includes('Invalid login') || error.message.includes('Email not confirmed'))) {
-                   throw new Error("Admin account not found or password incorrect. If this is your first time, please click 'Register New Account' to initialize the Admin user.");
+                   throw new Error("Admin account not found or password incorrect. Please click 'Register New Account' to initialize the Admin user if this is first run.");
                 }
                 throw error;
             }
             
             if (data.user) {
-                // 2. Check Access
+                // 2. Check Access & Profile Existence
                 const { data: profile, error: profileFetchError } = await supabase
                     .from('profiles')
                     .select('*')
@@ -134,25 +143,30 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
 
                 // Recovery: If Admin logs in but has no profile (rare case), create it
                 if (isAdminEmail && !profile) {
-                     await supabase.from('profiles').upsert([{
+                     const { error: recoveryError } = await supabase.from('profiles').upsert([{
                          id: data.user.id,
                          full_name: 'Super Admin',
                          employee_id: 'ADMIN-001',
                          email: 'admin@spin.com',
                          role: 'admin',
                          access: 'yes'
-                     }]);
+                     }], { onConflict: 'id' });
+
+                     if (recoveryError) {
+                         throw new Error("Failed to initialize Admin profile: " + recoveryError.message);
+                     }
                      // Proceed to login
                 } else if (profile) {
+                    // Check if access is granted
                     const hasAccess = profile.access === 'yes' || profile.role === 'admin';
                     if (!hasAccess) {
                         await supabase.auth.signOut();
                         throw new Error("Access denied. Your account is pending approval by an administrator.");
                     }
-                } else {
-                    // Non-admin user with no profile record
+                } else if (!isAdminEmail) {
+                    // Non-admin user with no profile record (shouldn't happen if registration worked)
                     await supabase.auth.signOut();
-                    throw new Error("Profile Not Found. Your account exists but has no profile data. Please contact support.");
+                    throw new Error("Profile Not Found. Please contact support.");
                 }
 
                 onLogin(data.user);

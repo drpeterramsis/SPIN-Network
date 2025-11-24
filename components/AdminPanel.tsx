@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { UserProfile, UserRole } from '../types';
 import { dataService } from '../services/dataService';
-import { Shield, User, CheckCircle2, XCircle, Search, Save, Loader2, Network, Briefcase } from 'lucide-react';
+import { Shield, User, CheckCircle2, XCircle, Search, Save, Loader2, Network, Briefcase, AlertCircle } from 'lucide-react';
 
 interface AdminPanelProps {
   profiles: UserProfile[];
@@ -12,6 +12,7 @@ interface AdminPanelProps {
 export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [errorId, setErrorId] = useState<string | null>(null);
 
   // Group profiles for manager assignment dropdowns
   const dms = profiles.filter(p => p.role === 'dm');
@@ -19,14 +20,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) =>
 
   const handleUpdate = async (id: string, updates: Partial<UserProfile>) => {
       setUpdatingId(id);
+      setErrorId(null);
       try {
           await dataService.updateProfile(id, updates);
-          onUpdate(); // Refresh parent
+          // Artificial delay to ensure DB propagation before refresh
+          setTimeout(() => {
+              onUpdate(); 
+          }, 500);
       } catch (e) {
           console.error("Update failed", e);
-          alert("Update failed");
+          setErrorId(id);
+          setTimeout(() => setErrorId(null), 3000);
       } finally {
-          setUpdatingId(null);
+          setTimeout(() => setUpdatingId(null), 500);
       }
   };
 
@@ -40,8 +46,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) =>
   };
 
   const filteredProfiles = profiles.filter(p => 
-      p.full_name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      p.employee_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (p.employee_id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (p.email && p.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
@@ -79,6 +85,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) =>
                 <tbody className="divide-y divide-slate-100">
                     {filteredProfiles.map(user => {
                         const isUpdating = updatingId === user.id;
+                        const isError = errorId === user.id;
                         return (
                             <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4">
@@ -154,18 +161,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) =>
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
                                         <button 
-                                            onClick={() => handleUpdate(user.id, { access: user.access === 'yes' ? 'no' : 'yes' })}
+                                            onClick={() => handleUpdate(user.id, { access: user.access === 'yes' ? 'pending' : 'yes' })}
                                             className={`relative w-12 h-6 rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${user.access === 'yes' ? 'bg-[#FFC600]' : 'bg-slate-200'}`}
                                             disabled={isUpdating || user.email === 'admin@spin.com'}
+                                            title="Toggle Access"
                                         >
                                             <span 
                                                 className={`inline-block w-4 h-4 transform bg-white rounded-full shadow transition-transform duration-200 ease-in-out mt-1 ml-1 ${user.access === 'yes' ? 'translate-x-6' : 'translate-x-0'}`} 
                                             />
                                         </button>
                                         <span className={`text-xs font-bold uppercase ${user.access === 'yes' ? 'text-green-600' : 'text-slate-400'}`}>
-                                            {user.access === 'yes' ? 'Active' : 'Denied'}
+                                            {user.access === 'yes' ? 'Active' : 'Pending'}
                                         </span>
                                         {isUpdating && <Loader2 className="w-3 h-3 animate-spin text-slate-400" />}
+                                        {isError && <AlertCircle className="w-3 h-3 text-red-500" title="Update failed - Check console" />}
                                     </div>
                                 </td>
                             </tr>
