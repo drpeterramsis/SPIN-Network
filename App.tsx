@@ -42,15 +42,16 @@ import {
   RefreshCw,
   Loader2,
   RotateCcw,
-  Shield
+  Shield,
+  FileText
 } from 'lucide-react';
 import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "SPIN v2.0.025",
-  version: "2.0.025"
+  name: "SPIN v2.0.027",
+  version: "2.0.027"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin';
@@ -299,7 +300,21 @@ const App: React.FC = () => {
       return [];
   };
 
+  const getVisibleStock = () => {
+      if (!userProfile) return [];
+      if (userProfile.role === 'admin') return stockTransactions;
+      
+      // MR only sees stock transactions for their own custody
+      if (userProfile.role === 'mr' && repCustody) {
+          return stockTransactions.filter(t => t.custody_id === repCustody.id);
+      }
+
+      // Default: show empty or global if needed, but for now restrict to admin/mr own
+      return []; 
+  };
+
   const visibleDeliveries = getVisibleDeliveries();
+  const visibleStock = getVisibleStock();
 
   useEffect(() => {
       if (step === 2 && !selectedCustody && repCustody) {
@@ -1035,6 +1050,217 @@ const App: React.FC = () => {
                   </>
               )}
             </div>
+          )}
+
+          {activeTab === 'deliver' && (
+             !user ? (
+                 <LockedState title="Delivery Access Restricted" description="Please login to access the delivery portal." loginRequired />
+             ) : !canDeliver ? (
+                 <LockedState title="Access Denied" description="Only Medical Representatives can dispense products." />
+             ) : (
+                <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
+                    <div className="flex items-center gap-4 border-b-2 border-slate-100 pb-4">
+                        <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 1 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>1</div>
+                        <div className="h-0.5 bg-slate-100 flex-1"></div>
+                        <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${step >= 2 ? 'bg-black text-[#FFC600]' : 'bg-slate-200 text-slate-500'}`}>2</div>
+                    </div>
+
+                    {step === 1 && (
+                        <div className="bg-white shadow-sm border-t-4 border-[#FFC600] p-8">
+                            <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2"><UserCircle className="w-6 h-6 text-[#FFC600]" /> Patient Identification</h2>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">National ID / Phone Number</label>
+                                    <div className="flex gap-2">
+                                        <input type="text" placeholder="Enter ID to search..." className="flex-1 border-2 border-slate-200 p-3 font-mono text-lg focus:border-black outline-none transition-colors" value={nidSearch} onChange={e => setNidSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handlePatientSearch()} />
+                                        <button onClick={handlePatientSearch} className="bg-black text-white px-6 font-bold uppercase tracking-wide hover:bg-slate-800 transition-colors"><Search className="w-5 h-5" /></button>
+                                    </div>
+                                </div>
+                                
+                                {hasSearched && !foundPatient && (
+                                    <div className="mt-8 bg-slate-50 p-6 border border-slate-200 animate-in fade-in zoom-in duration-300">
+                                        <div className="flex items-center gap-3 mb-4 text-orange-600">
+                                            <AlertTriangle className="w-5 h-5" />
+                                            <span className="font-bold">Patient not found in directory.</span>
+                                        </div>
+                                        <h3 className="font-bold text-lg mb-4">Register New Patient</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Full Name</label><input type="text" className="w-full border p-2" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} placeholder="Patient Name" /></div>
+                                            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Phone Number</label><input type="text" className="w-full border p-2" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} placeholder="01xxxxxxxxx" /></div>
+                                        </div>
+                                        <button onClick={handleCreatePatient} disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase tracking-wide flex items-center justify-center gap-2">
+                                            Create & Continue <ArrowRight className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
+                                
+                                {foundPatient && (
+                                    <div className="mt-6 bg-green-50 border border-green-200 p-4 flex justify-between items-center animate-in fade-in slide-in-from-top-2">
+                                        <div><h3 className="font-bold text-green-900">{foundPatient.full_name}</h3><p className="text-sm text-green-700 font-mono">ID: {foundPatient.national_id}</p></div>
+                                        <button onClick={() => setStep(2)} className="bg-green-600 text-white px-4 py-2 font-bold uppercase text-xs rounded hover:bg-green-700 flex items-center gap-2">Continue <ArrowRight className="w-3 h-3" /></button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {step === 2 && (
+                        <div className="bg-white shadow-sm border-t-4 border-black p-8 animate-in slide-in-from-right-4 duration-300">
+                             <div className="flex justify-between items-start mb-6 border-b border-slate-100 pb-4">
+                                <div><h2 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Package className="w-6 h-6 text-[#FFC600]" /> Delivery Details</h2><p className="text-xs text-slate-500 mt-1">Dispensing to: <span className="font-bold text-slate-900">{foundPatient?.full_name}</span></p></div>
+                                <button onClick={handleCancelDelivery} className="text-xs font-bold text-red-500 hover:text-red-700 uppercase">Cancel</button>
+                             </div>
+
+                             {duplicateWarning && (
+                                <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 flex items-start gap-3">
+                                    <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+                                    <div><h4 className="font-bold text-red-800 text-sm uppercase">Duplicate Warning</h4><p className="text-xs text-red-700 mt-1">This patient has already received this product within the last 20 days. Please verify prescription.</p></div>
+                                </div>
+                             )}
+
+                             <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <div className="flex justify-between items-end mb-1"><label className="block text-xs font-bold text-slate-500 uppercase">Prescribing Doctor</label><button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div>
+                                        <select className="w-full border p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}><option value="">-- Select HCP --</option>{hcps.map(h => <option key={h.id} value={h.id}>{h.full_name} - {h.hospital}</option>)}</select>
+                                    </div>
+                                    <div>
+                                        <div className="flex justify-between items-end mb-1"><label className="block text-xs font-bold text-slate-500 uppercase">Source Location</label><button onClick={() => setShowClinicModal(true)} className="text-[10px] font-bold uppercase bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded flex items-center gap-1"><Plus className="w-3 h-3" /> New</button></div>
+                                        <select className="w-full border p-3 bg-white focus:border-[#FFC600] outline-none" value={selectedCustody} onChange={e => setSelectedCustody(e.target.value)}>
+                                            {repCustody && <option value={repCustody.id}>My Inventory (Rep)</option>}
+                                            {custodies.filter(c => c.type === 'clinic').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Product</label>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        {PRODUCTS.map(p => (
+                                            <button key={p.id} onClick={() => setSelectedProduct(p.id)} className={`p-4 border-2 text-left transition-all ${getProductButtonStyles(p.id, selectedProduct === p.id)}`}>
+                                                <div className="font-bold">{p.name}</div>
+                                                <div className="text-[10px] opacity-70 uppercase">{p.type}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 border border-slate-200">
+                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Rx Date</label><input type="date" className="w-full border p-2 text-sm" value={rxDate} onChange={e => setRxDate(e.target.value)} /></div>
+                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Delivery Date</label><input type="date" className="w-full border p-2 text-sm" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} /></div>
+                                    <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Educator Report Date</label><input type="date" className="w-full border p-2 text-sm" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} /></div>
+                                    <div className="md:col-span-3">
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Reported Educator Name</label>
+                                        <input type="text" className="w-full border p-2 text-sm" value={educatorName} onChange={e => setEducatorName(e.target.value)} list="educator-suggestions-main" placeholder="Educator who verified" />
+                                        <datalist id="educator-suggestions-main">{educatorSuggestions.map(s => <option key={s} value={s} />)}</datalist>
+                                    </div>
+                                </div>
+
+                                <button onClick={handleSubmitDelivery} disabled={isSubmitting} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-4 text-lg uppercase tracking-wide flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.99]">
+                                    Confirm Delivery <CheckCircle className="w-6 h-6" />
+                                </button>
+                             </div>
+                        </div>
+                    )}
+                </div>
+             )
+          )}
+
+          {activeTab === 'database' && (
+             !user ? (
+                 <LockedState title="Database Locked" description="Authorized personnel only." loginRequired />
+             ) : (
+                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
+                     <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 shadow-sm border border-slate-200">
+                         <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0">
+                             {(['deliveries', 'hcps', 'locations', 'stock', 'patients'] as DBView[]).map(view => (
+                                 <button key={view} onClick={() => setDbView(view)} className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-colors ${dbView === view ? 'bg-black text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                                     {view === 'hcps' ? 'Doctors' : view.charAt(0).toUpperCase() + view.slice(1)}
+                                 </button>
+                             ))}
+                         </div>
+                         <div className="relative w-full md:w-64">
+                             <input type="text" placeholder="Search records..." className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 text-sm rounded focus:border-black outline-none transition-colors" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                         </div>
+                     </div>
+
+                     <div className="bg-white shadow-sm border border-slate-200 overflow-hidden">
+                         <div className="overflow-x-auto">
+                             <table className="w-full text-left border-collapse">
+                                 <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
+                                     <tr>
+                                         {dbView === 'deliveries' && <><th className="p-4">Date</th><th className="p-4">Patient</th><th className="p-4">Product</th><th className="p-4">HCP</th><th className="p-4">Source</th><th className="p-4">Educator</th><th className="p-4 text-right">Actions</th></>}
+                                         {dbView === 'hcps' && <><th className="p-4">Doctor Name</th><th className="p-4">Specialty</th><th className="p-4">Hospital</th><th className="p-4 text-right">Actions</th></>}
+                                         {dbView === 'locations' && <><th className="p-4">Name</th><th className="p-4">Type</th><th className="p-4">Stock</th><th className="p-4 text-right">Actions</th></>}
+                                         {dbView === 'stock' && <><th className="p-4">Date</th><th className="p-4">Source / Destination</th><th className="p-4 text-center">Qty</th><th className="p-4 text-right">Actions</th></>}
+                                         {dbView === 'patients' && <><th className="p-4">Full Name</th><th className="p-4">National ID</th><th className="p-4">Phone</th><th className="p-4 text-right">Actions</th></>}
+                                     </tr>
+                                 </thead>
+                                 <tbody className="divide-y divide-slate-100 text-sm">
+                                     {dbView === 'deliveries' && filterData(visibleDeliveries).map((item: Delivery) => (
+                                         <tr key={item.id} className="hover:bg-slate-50 group">
+                                             <td className="p-4 font-mono text-slate-500 text-xs">{formatDateFriendly(item.delivery_date)}</td>
+                                             <td className="p-4"><div className="font-bold text-slate-900">{item.patient?.full_name}</div><div className="text-[10px] text-slate-400 font-mono">{item.patient?.national_id}</div></td>
+                                             <td className="p-4"><span className={`text-[10px] font-bold px-2 py-1 rounded border uppercase ${getProductStyles(item.product_id)}`}>{getProductName(item.product_id)}</span></td>
+                                             <td className="p-4 text-slate-600 text-xs">{item.hcp?.full_name}</td>
+                                             <td className="p-4 text-slate-500 text-xs">{item.custody?.name}</td>
+                                             <td className="p-4 text-slate-500 text-xs">{item.educator_name || '-'}</td>
+                                             <td className="p-4 text-right">
+                                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                     <button onClick={() => openEditModal('deliveries', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>
+                                                     {(isAdmin || item.delivered_by === user.id) && <button onClick={() => handleDeleteItem('deliveries', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>}
+                                                 </div>
+                                             </td>
+                                         </tr>
+                                     ))}
+                                     {dbView === 'hcps' && filterData(hcps).map((item: HCP) => (
+                                         <tr key={item.id} className="hover:bg-slate-50 group">
+                                             <td className="p-4 font-bold text-slate-900">{item.full_name}</td>
+                                             <td className="p-4 text-slate-600">{item.specialty}</td>
+                                             <td className="p-4 text-slate-600">{item.hospital}</td>
+                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal('hcps', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('hcps', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div></td>
+                                         </tr>
+                                     ))}
+                                     {dbView === 'locations' && filterData(custodies).map((item: Custody) => (
+                                         <tr key={item.id} className="hover:bg-slate-50 group">
+                                             <td className="p-4 font-bold text-slate-900">{item.name}</td>
+                                             <td className="p-4 text-xs uppercase font-bold text-slate-500">{item.type}</td>
+                                             <td className="p-4 font-mono font-bold">{item.current_stock}</td>
+                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal('locations', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('locations', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div></td>
+                                         </tr>
+                                     ))}
+                                     {dbView === 'stock' && filterData(visibleStock).map((item: StockTransaction) => (
+                                         <tr key={item.id} className="hover:bg-slate-50 group">
+                                             <td className="p-4 font-mono text-slate-500 text-xs">{formatDateFriendly(item.transaction_date)}</td>
+                                             <td className="p-4 text-xs font-bold text-slate-700">{resolveSourceText(item.source)}</td>
+                                             <td className={`p-4 font-mono font-bold text-center ${item.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{item.quantity > 0 ? '+' : ''}{item.quantity}</td>
+                                             <td className="p-4 text-right">
+                                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                     {item.custody_id !== repCustody?.id && item.quantity < 0 && <button onClick={() => handleRetrieveStock(item)} title="Retrieve Stock" className="p-1 text-orange-500 hover:bg-orange-50 rounded"><Undo2 className="w-4 h-4" /></button>}
+                                                     <button onClick={() => openEditModal('tx', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>
+                                                     <button onClick={() => handleDeleteItem('tx', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>
+                                                 </div>
+                                             </td>
+                                         </tr>
+                                     ))}
+                                     {dbView === 'patients' && filterData(patients).map((item: Patient) => (
+                                         <tr key={item.id} className="hover:bg-slate-50 group">
+                                             <td className="p-4 font-bold text-slate-900">{item.full_name}</td>
+                                             <td className="p-4 font-mono text-slate-600 text-xs">{item.national_id}</td>
+                                             <td className="p-4 font-mono text-slate-600 text-xs">{item.phone_number}</td>
+                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal('patients', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('patients', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div></td>
+                                         </tr>
+                                     ))}
+                                     {/* Empty States */}
+                                     {dbView === 'deliveries' && visibleDeliveries.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-400 italic">No delivery records found.</td></tr>}
+                                     {dbView === 'stock' && visibleStock.length === 0 && <tr><td colSpan={4} className="p-8 text-center text-slate-400 italic">No stock history available.</td></tr>}
+                                 </tbody>
+                             </table>
+                         </div>
+                     </div>
+                 </div>
+             )
           )}
 
           {activeTab === 'admin' && isAdmin && (

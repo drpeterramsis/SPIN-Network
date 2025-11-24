@@ -1,6 +1,6 @@
 {
-  "name": "SPIN v2.0.026 - auth fixes",
+  "name": "SPIN v2.0.027 - MR Access Fix",
   "description": "Supply of Pens & Insulin Network - Smart tracking system for insulin distribution.",
-  "version": "2.0.026",
+  "version": "2.0.027",
   "requestFramePermissions": []
 }
