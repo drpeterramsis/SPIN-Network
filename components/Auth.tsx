@@ -80,7 +80,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                     id: authData.user.id,
                     full_name: fullName,
                     employee_id: employeeId,
-                    corporate_email: email,
+                    email: email,
                     role: finalRole,
                     access: finalAccess
                 }
@@ -88,8 +88,10 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
 
             if (profileError) {
                 console.error("Profile creation error:", profileError);
-                // Note: If user already exists in Auth but not in Profile, this might fail or need upsert.
-                // We use insert here. If it fails, we might need to check why.
+                // If profile creation failed but user is created, we are in a bad state. 
+                // However, Supabase Auth doesn't rollback. 
+                // We throw here so the user sees the error.
+                throw new Error("Registration succeeded but profile creation failed. Please contact admin.");
             }
 
             if (isAdminEmail) {
@@ -128,7 +130,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                          id: data.user.id,
                          full_name: 'Super Admin',
                          employee_id: 'ADMIN-001',
-                         corporate_email: 'admin@spin.com',
+                         email: 'admin@spin.com',
                          role: 'admin',
                          access: 'yes'
                      }]);
@@ -139,6 +141,10 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                         await supabase.auth.signOut();
                         throw new Error("Access denied. Your account is pending approval by an administrator.");
                     }
+                } else {
+                    // Non-admin user with no profile record
+                    await supabase.auth.signOut();
+                    throw new Error("Profile Not Found. Your account exists but has no profile data. Please contact support.");
                 }
 
                 onLogin(data.user);
