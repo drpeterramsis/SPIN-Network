@@ -1,6 +1,6 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { Patient, HCP, Delivery, Custody, StockTransaction, UserProfile } from '../types';
+import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS, UserProfile } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
 // Local Storage Keys
@@ -10,7 +10,7 @@ const KEYS = {
   DELIVERIES: 'spin_deliveries',
   CUSTODY: 'spin_custody',
   STOCK: 'spin_stock_transactions',
-  PROFILES: 'spin_profiles' // For local demo mode
+  PROFILES: 'spin_profiles' // Mock profiles for local dev
 };
 
 // Helper to cascade text updates (renaming)
@@ -63,26 +63,30 @@ const updateHistoryText = async (oldText: string, newText: string) => {
 
 export const dataService = {
   
-  // --- PROFILES & HIERARCHY ---
+  // --- PROFILES (Admin) ---
   async getAllProfiles(): Promise<UserProfile[]> {
       if (isSupabaseConfigured() && supabase) {
-          const { data, error } = await supabase.from('profiles').select('*');
+          const { data, error } = await supabase.from('profiles').select('*').order('full_name');
           if (error) throw error;
-          return data as UserProfile[];
+          
+          // Fallback logic for old profiles without roles
+          return (data || []).map((p: any) => ({
+              ...p,
+              role: p.role || 'mr', // Default to MR if undefined
+              access: p.access || 'pending'
+          }));
       } else {
-          const stored = localStorage.getItem(KEYS.PROFILES);
-          if (!stored) return [];
-          return JSON.parse(stored);
+          return JSON.parse(localStorage.getItem(KEYS.PROFILES) || '[]');
       }
   },
 
-  async updateUserProfile(id: string, updates: Partial<UserProfile>): Promise<void> {
+  async updateProfile(id: string, updates: Partial<UserProfile>): Promise<void> {
       if (isSupabaseConfigured() && supabase) {
           const { error } = await supabase.from('profiles').update(updates).eq('id', id);
           if (error) throw error;
       } else {
-          const list = JSON.parse(localStorage.getItem(KEYS.PROFILES) || '[]');
-          const idx = list.findIndex((p: UserProfile) => p.id === id);
+          const list: UserProfile[] = JSON.parse(localStorage.getItem(KEYS.PROFILES) || '[]');
+          const idx = list.findIndex(p => p.id === id);
           if (idx >= 0) {
               list[idx] = { ...list[idx], ...updates };
               localStorage.setItem(KEYS.PROFILES, JSON.stringify(list));
@@ -148,7 +152,6 @@ export const dataService = {
         }
     }
 
-    // Smart Rename: Update historical text references
     if (oldPatient && updates.full_name && oldPatient.full_name !== updates.full_name) {
         await updateHistoryText(oldPatient.full_name, updates.full_name);
         await updateHistoryText(id, updates.full_name); 
@@ -362,7 +365,6 @@ export const dataService = {
   },
 
   async logDelivery(delivery: Omit<Delivery, 'id'>, userName: string): Promise<void> {
-      // 1. Deduct Stock
       if (delivery.custody_id) {
           await this.processStockTransaction(
               delivery.custody_id,
@@ -372,7 +374,6 @@ export const dataService = {
           );
       }
 
-      // 2. Save Delivery
       if (isSupabaseConfigured() && supabase) {
           const { error } = await supabase.from('deliveries').insert([{
              patient_id: delivery.patient_id,
@@ -425,6 +426,7 @@ export const dataService = {
           
           if (custody) {
               let txIdToDelete = null;
+              
               if (isSupabaseConfigured() && supabase) {
                    const { data: txs } = await supabase.from('stock_transactions')
                       .select('*')
@@ -432,6 +434,7 @@ export const dataService = {
                       .eq('quantity', -delivery.quantity)
                       .eq('transaction_date', delivery.delivery_date)
                       .limit(1);
+                   
                    if (txs && txs.length > 0) {
                        txIdToDelete = txs[0].id;
                    }
@@ -534,7 +537,6 @@ export const dataService = {
 
   async deleteStockTransaction(id: string): Promise<void> {
       let tx: StockTransaction | null = null;
-      
       if (isSupabaseConfigured() && supabase) {
           const { data } = await supabase.from('stock_transactions').select('*').eq('id', id).single();
           tx = data;

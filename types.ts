@@ -1,15 +1,5 @@
 
-export type UserRole = 'admin' | 'lm' | 'dm' | 'rep' | 'pending';
-
-export interface UserProfile {
-  id: string;
-  email: string; // Joined from auth
-  full_name: string;
-  employee_id?: string;
-  role: UserRole;
-  access: 'yes' | 'no';
-  reports_to?: string; // ID of the manager (DM for Reps, LM for DMs)
-}
+export type UserRole = 'admin' | 'lm' | 'dm' | 'mr';
 
 export interface Product {
   id: string;
@@ -22,6 +12,16 @@ export const PRODUCTS: Product[] = [
   { id: 'humaxin-r', name: 'Humaxin R Cart', type: 'cartridge' },
   { id: 'humaxin-mix', name: 'Humaxin Mix 70/30 Cart', type: 'cartridge' }
 ];
+
+export interface UserProfile {
+  id: string;
+  email?: string;
+  full_name: string;
+  employee_id: string;
+  role: UserRole;
+  manager_id?: string | null; // The ID of the DM (if MR) or LM (if DM)
+  access: 'yes' | 'no' | 'pending';
+}
 
 export interface Patient {
   id: string;

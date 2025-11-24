@@ -1,6 +1,8 @@
+
 import React, { useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { Loader2, AlertCircle, Hexagon, X, CheckCircle2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, AlertCircle, Hexagon, X, CheckCircle2, Eye, EyeOff, User, Briefcase, Network } from 'lucide-react';
+import { UserRole } from '../types';
 
 interface AuthProps {
   isOpen: boolean;
@@ -15,6 +17,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [employeeId, setEmployeeId] = useState('');
+  const [role, setRole] = useState<UserRole>('mr');
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -36,7 +39,13 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             setLoading(false);
             setIsSignUp(false);
         } else {
-            onLogin({ id: 'demo-user', email: email || 'demo@spin-net.com' });
+            // Mock Login
+            const isAdmin = email === 'admin@spin.com';
+            onLogin({ 
+                id: 'demo-user', 
+                email: email || 'demo@spin-net.com',
+                user_metadata: { role: isAdmin ? 'admin' : 'mr' } 
+            });
             setLoading(false);
             onClose();
         }
@@ -56,19 +65,21 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             if (authError) throw authError;
             if (!authData.user) throw new Error("Registration failed");
 
-            // 2. Create Profile
+            // 2. Create Profile with Role
             const { error: profileError } = await supabase.from('profiles').insert([
                 {
                     id: authData.user.id,
                     full_name: fullName,
                     employee_id: employeeId,
                     corporate_email: email,
+                    role: role, // 'mr', 'dm', or 'lm'
                     access: 'no' // Default to no access
                 }
             ]);
 
             if (profileError) {
                 console.error("Profile creation error:", profileError);
+                // Try to fallback if profile creation fails but auth succeeds (rare)
             }
 
             setSuccessMsg("Registration successful. Please wait for admin approval (Access Status: Pending).");
@@ -79,16 +90,34 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             if (error) throw error;
             
             if (data.user) {
-                // 2. Check Access - MODIFIED: We now allow login even if access is 'no'
-                // The App.tsx will handle the "Pending" screen.
+                // 2. Check Access
                 const { data: profile, error: profileFetchError } = await supabase
                     .from('profiles')
-                    .select('access')
+                    .select('*')
                     .eq('id', data.user.id)
                     .single();
                 
                 if (profileFetchError && profileFetchError.code !== 'PGRST116') {
                      throw profileFetchError;
+                }
+
+                // Superadmin bypass
+                if (data.user.email === 'admin@spin.com' && !profile) {
+                     // Create superadmin profile if missing
+                     await supabase.from('profiles').insert([{
+                         id: data.user.id,
+                         full_name: 'Super Admin',
+                         employee_id: 'ADMIN-001',
+                         corporate_email: 'admin@spin.com',
+                         role: 'admin',
+                         access: 'yes'
+                     }]);
+                } else if (profile) {
+                    const hasAccess = profile.access === 'yes' || profile.role === 'admin';
+                    if (!hasAccess) {
+                        await supabase.auth.signOut();
+                        throw new Error("Access denied. Your account has not been approved by an administrator yet.");
+                    }
                 }
 
                 onLogin(data.user);
@@ -107,6 +136,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
       setError('');
       setSuccessMsg('');
       setShowPassword(false);
+      setRole('mr'); // Reset to default
   };
 
   return (
@@ -176,6 +206,35 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                         className="w-full px-4 py-3 border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium"
                         placeholder="EMP-12345"
                     />
+                    </div>
+                    <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Role</label>
+                    <div className="grid grid-cols-1 gap-2">
+                        <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'mr' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                            <input type="radio" name="role" value="mr" checked={role === 'mr'} onChange={() => setRole('mr')} className="accent-black w-4 h-4" />
+                            <div className="flex-1">
+                                <span className="block text-sm font-bold text-slate-900">Medical Representative (MR)</span>
+                                <span className="text-xs text-slate-500">Distribution & Delivery</span>
+                            </div>
+                            <Briefcase className="w-4 h-4 text-slate-400" />
+                        </label>
+                        <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'dm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                            <input type="radio" name="role" value="dm" checked={role === 'dm'} onChange={() => setRole('dm')} className="accent-black w-4 h-4" />
+                            <div className="flex-1">
+                                <span className="block text-sm font-bold text-slate-900">District Manager (DM)</span>
+                                <span className="text-xs text-slate-500">Manages MR Team</span>
+                            </div>
+                            <User className="w-4 h-4 text-slate-400" />
+                        </label>
+                         <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'lm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                            <input type="radio" name="role" value="lm" checked={role === 'lm'} onChange={() => setRole('lm')} className="accent-black w-4 h-4" />
+                            <div className="flex-1">
+                                <span className="block text-sm font-bold text-slate-900">Line Manager (LM)</span>
+                                <span className="text-xs text-slate-500">Regional Oversight</span>
+                            </div>
+                            <Network className="w-4 h-4 text-slate-400" />
+                        </label>
+                    </div>
                     </div>
                 </>
             )}
