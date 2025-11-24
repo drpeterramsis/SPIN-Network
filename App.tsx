@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Auth } from './components/Auth';
 import { dataService } from './services/dataService';
@@ -60,12 +59,7 @@ type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin';
 type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock' | 'patients';
 
 // --- CUSTOM DATE INPUT TO FORCE DD/MM/YYYY ---
-// Ensures strict user input compliance and consistent display
 const DateInput = ({ value, onChange, className, required, placeholder }: { value: string, onChange: (val: string) => void, className?: string, required?: boolean, placeholder?: string }) => {
-    // Value = YYYY-MM-DD (ISO) for backend/storage
-    // Display = DD/MM/YYYY
-    
-    // Convert YYYY-MM-DD -> DD/MM/YYYY
     const formatDisplay = (iso: string) => {
         if (!iso) return '';
         const [y, m, d] = iso.split('-');
@@ -81,20 +75,16 @@ const DateInput = ({ value, onChange, className, required, placeholder }: { valu
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         let input = e.target.value;
-        // Allow only numbers and slash
         input = input.replace(/[^0-9/]/g, '');
         
-        // Auto-insert slash logic for better UX
         if (input.length === 2 && displayVal.length === 1) input += '/';
         if (input.length === 5 && displayVal.length === 4) input += '/';
         
         setDisplayVal(input);
 
-        // Try to parse if complete (DD/MM/YYYY = 10 chars)
         if (input.length === 10) {
             const [d, m, y] = input.split('/');
             if (d && m && y && !isNaN(Number(d)) && !isNaN(Number(m)) && !isNaN(Number(y))) {
-                // Simple validation
                 const date = new Date(`${y}-${m}-${d}`);
                 if (!isNaN(date.getTime())) {
                     onChange(`${y}-${m}-${d}`);
@@ -210,8 +200,8 @@ const App: React.FC = () => {
   }, []);
 
   // --- HIERARCHY CALCULATION ---
-  // Recursive function to get all subordinates' IDs
   const getNetworkIds = useCallback((rootUser: UserProfile, profiles: UserProfile[]): string[] => {
+      if (!rootUser) return []; // Safety check
       if (rootUser.role === 'admin') return profiles.map(p => p.id);
       if (rootUser.role === 'rep') return [rootUser.id];
 
@@ -280,20 +270,16 @@ const App: React.FC = () => {
                         access: 'yes',
                         reports_to: undefined
                     });
-                    if (!data) showToast("Emergency Admin Access Granted", "info");
                     return;
                 }
 
                 if (data) {
-                    if (data.access === 'yes') {
-                        setUserProfile(data);
-                    } else {
-                        await supabase.auth.signOut();
-                        setUser(null);
-                        showToast("Account pending approval from Admin.", "info");
+                    setUserProfile(data);
+                    if (data.access !== 'yes') {
+                        showToast("Access is restricted. Please see dashboard status.", "info");
                     }
                 } else {
-                    // Profile missing (white screen fix)
+                    // Profile missing (white screen fix) - Default to pending
                     setUserProfile({
                         id: user.id,
                         email: user.email,
@@ -326,6 +312,7 @@ const App: React.FC = () => {
           const ids = getNetworkIds(userProfile, allUsers);
           return deliveries.filter(d => ids.includes(d.delivered_by));
       }
+      // Default / Rep
       return deliveries.filter(d => d.delivered_by === user.id);
   };
 
@@ -392,15 +379,29 @@ const App: React.FC = () => {
       await dataService.updateUserProfile(u.id, { access: newAccess });
       showToast(`Access ${newAccess === 'yes' ? 'Granted' : 'Revoked'}`, "success"); loadData();
   };
+  
+  // --- EMERGENCY ADMIN RECOVERY ---
+  const handleClaimAdmin = async () => {
+      if (!user) return;
+      if (!confirm("⚠️ RECOVERY MODE \n\nAre you sure you want to promote yourself to ADMIN? Use this only if you are the system owner and lost access.")) return;
+      setIsSubmitting(true);
+      try {
+          await dataService.updateUserProfile(user.id, { role: 'admin', access: 'yes' });
+          window.location.reload();
+      } catch (e: any) {
+          showToast("Failed to claim admin: " + e.message, "error");
+          setIsSubmitting(false);
+      }
+  };
 
   const handleReceiveStock = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmitting(true); if(repCustody) await dataService.processStockTransaction(repCustody.id, receiveForm.quantity, receiveForm.date, `Educator: ${receiveForm.educatorName}`); loadData(); setIsSubmitting(false); };
   const handleTransferStock = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmitting(true); await dataService.processStockTransaction(transferForm.toCustodyId, transferForm.quantity, transferForm.date, 'Transfer', repCustody?.id); loadData(); setIsSubmitting(false); };
   const handleDeleteItem = async (type: DBView | 'tx', id: string) => { if(confirm("Delete record?")) { setIsSubmitting(true); if(type==='deliveries') await dataService.deleteDelivery(id); if(type==='stock'||type==='tx') await dataService.deleteStockTransaction(id); loadData(); setIsSubmitting(false); } };
 
   // Role Checks
-  const canDeliver = userProfile?.role === 'rep' || userProfile?.role === 'admin';
-  const isAdmin = userProfile?.role === 'admin';
-  const isManager = userProfile?.role === 'dm' || userProfile?.role === 'lm' || isAdmin;
+  const canDeliver = userProfile?.access === 'yes' && (userProfile?.role === 'rep' || userProfile?.role === 'admin');
+  const isAdmin = userProfile?.access === 'yes' && userProfile?.role === 'admin';
+  const isManager = userProfile?.access === 'yes' && (userProfile?.role === 'dm' || userProfile?.role === 'lm' || isAdmin);
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-black text-[#FFC600]"><Activity className="animate-spin w-10 h-10" /></div>;
 
@@ -422,7 +423,7 @@ const App: React.FC = () => {
               {user ? (
                   <>
                     <button onClick={() => setShowProfileModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold text-slate-400 uppercase hover:text-[#FFC600]"><UserCircle className="w-4 h-4" />{userProfile?.full_name || user.email}</button>
-                    <div className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${isAdmin ? 'bg-red-500 text-white border-red-600' : 'bg-slate-800 text-slate-300 border-slate-600'}`}>{userProfile?.role || 'GUEST'}</div>
+                    <div className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${isAdmin ? 'bg-red-500 text-white border-red-600' : 'bg-slate-800 text-slate-300 border-slate-600'}`}>{userProfile?.role || '...'}</div>
                     {isManager && <button onClick={() => setShowAIModal(true)} className="hidden md:flex items-center gap-2 text-xs font-bold uppercase bg-slate-800 px-3 py-1.5 rounded text-[#FFC600]"><Sparkles className="w-3 h-3" /> AI Report</button>}
                   </>
               ) : (
@@ -433,6 +434,43 @@ const App: React.FC = () => {
       </nav>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative flex flex-col">
+        {/* ACCESS RESTRICTED OVERLAY */}
+        {user && (!userProfile || userProfile.access !== 'yes') && (
+            <div className="absolute inset-0 z-30 bg-white flex flex-col items-center justify-center p-8 text-center">
+                {userProfile ? (
+                    <>
+                        <div className="w-20 h-20 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mb-6 animate-pulse">
+                            <Lock className="w-10 h-10" />
+                        </div>
+                        <h2 className="text-3xl font-black text-slate-900 mb-2">Access Restricted</h2>
+                        <p className="text-slate-500 max-w-md mb-8">
+                            Your account ({user.email}) is currently <strong>Pending Approval</strong>. 
+                            Please contact your system administrator to enable your access.
+                        </p>
+                        
+                        <div className="p-6 bg-slate-50 border border-slate-200 rounded-lg max-w-sm w-full">
+                            <h4 className="text-xs font-bold uppercase text-slate-400 mb-4">Recovery Options</h4>
+                            <button 
+                                onClick={handleClaimAdmin}
+                                className="w-full bg-slate-900 text-white py-3 rounded font-bold text-xs uppercase tracking-wide hover:bg-slate-700 transition-all flex items-center justify-center gap-2 mb-3"
+                            >
+                                <Shield className="w-4 h-4 text-[#FFC600]" /> 
+                                I am the Admin (Fix Access)
+                            </button>
+                            <button 
+                                onClick={() => { supabase?.auth.signOut(); setUser(null); }}
+                                className="w-full bg-white border border-slate-300 text-slate-600 py-3 rounded font-bold text-xs uppercase tracking-wide hover:bg-slate-50 transition-all"
+                            >
+                                Log Out
+                            </button>
+                        </div>
+                    </>
+                ) : (
+                    <Loader2 className="w-10 h-10 text-[#FFC600] animate-spin" />
+                )}
+            </div>
+        )}
+
         <main className="max-w-7xl w-full mx-auto px-4 py-8 min-h-full flex-grow">
           
           {/* TABS */}
@@ -554,7 +592,7 @@ const App: React.FC = () => {
                         <h1 className="text-3xl font-black text-slate-900 tracking-tight">Overview</h1>
                         <p className="text-slate-500 text-sm">
                             Welcome back, {userProfile?.full_name || 'Guest'}. 
-                            {userProfile?.role !== 'rep' && userProfile?.role !== 'admin' && ` Viewing data for ${userProfile?.role.toUpperCase()} Level.`}
+                            {userProfile?.role !== 'rep' && userProfile?.role !== 'admin' && userProfile?.role && ` Viewing data for ${userProfile.role.toUpperCase()} Level.`}
                         </p>
                     </div>
                     {userProfile && <span className={`px-3 py-1 text-xs font-bold text-white rounded uppercase shadow-sm ${userProfile.role === 'admin' ? 'bg-red-500' : 'bg-slate-900'}`}>{userProfile.role} View</span>}

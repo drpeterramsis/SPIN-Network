@@ -79,7 +79,8 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             if (error) throw error;
             
             if (data.user) {
-                // 2. Check Access
+                // 2. Check Access - MODIFIED: We now allow login even if access is 'no'
+                // The App.tsx will handle the "Pending" screen.
                 const { data: profile, error: profileFetchError } = await supabase
                     .from('profiles')
                     .select('access')
@@ -88,14 +89,6 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                 
                 if (profileFetchError && profileFetchError.code !== 'PGRST116') {
                      throw profileFetchError;
-                }
-
-                // If profile exists, check access. If missing, enforce strict policy (Access Denied).
-                const hasAccess = profile?.access === 'yes';
-
-                if (!hasAccess) {
-                    await supabase.auth.signOut();
-                    throw new Error("Access denied. Your account has not been approved by an administrator yet.");
                 }
 
                 onLogin(data.user);
