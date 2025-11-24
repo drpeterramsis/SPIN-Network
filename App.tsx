@@ -44,7 +44,8 @@ import {
   FileText,
   PieChart,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Network
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -119,7 +120,7 @@ const App: React.FC = () => {
   
   // Dashboard Expand States
   const [expandPrescribers, setExpandPrescribers] = useState(false);
-  const [expandDeliveries, setExpandDeliveries] = useState(false);
+  const [expandDeliveries, setExpandDeliveries] = useState(true);
 
   // Computed Suggestions
   const [hcpSpecialties, setHcpSpecialties] = useState<string[]>([]);
@@ -338,6 +339,16 @@ const App: React.FC = () => {
   const visibleDeliveries = getVisibleDeliveries();
   const visibleStock = getVisibleStock();
 
+  // Helper to resolve Hierarchy Names
+  const getMrAndDm = (mrId: string) => {
+      const mr = allProfiles.find(p => p.id === mrId);
+      const dm = mr?.manager_id ? allProfiles.find(p => p.id === mr.manager_id) : null;
+      return { 
+          mrName: mr?.full_name || 'Unknown', 
+          dmName: dm?.full_name || 'Unassigned' 
+      };
+  };
+
   // --- ANALYTICS CALCULATIONS ---
   const uniquePrescribersCount = useMemo(() => {
       return new Set(visibleDeliveries.map(d => d.hcp_id)).size;
@@ -366,11 +377,12 @@ const App: React.FC = () => {
       });
       return Object.entries(counts).map(([id, value]) => {
           const product = PRODUCTS.find(p => p.id === id);
+          const percent = ((value / total) * 100).toFixed(1);
           return {
             name: product?.name || id,
             id: id,
             value,
-            percentage: Math.round((value / total) * 100)
+            percentage: percent
           };
       });
   }, [visibleDeliveries]);
@@ -834,6 +846,77 @@ const App: React.FC = () => {
     </div>
   );
 
+  const renderTeamStats = () => {
+      if (userProfile?.role === 'dm') {
+          const myMrs = allProfiles.filter(p => p.manager_id === user.id);
+          const stats = myMrs.map(mr => {
+              const count = deliveries.filter(d => d.delivered_by === mr.id).length;
+              return { ...mr, count };
+          }).sort((a,b) => b.count - a.count);
+
+          return (
+              <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                      <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-bold">
+                          <tr><th className="p-3">Medical Representative</th><th className="p-3">Employee ID</th><th className="p-3 text-right">Deliveries</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                          {stats.map(mr => (
+                              <tr key={mr.id}>
+                                  <td className="p-3 font-bold text-slate-700">{mr.full_name}</td>
+                                  <td className="p-3 text-slate-500 font-mono text-xs">{mr.employee_id}</td>
+                                  <td className="p-3 text-right font-black">{mr.count}</td>
+                              </tr>
+                          ))}
+                          {stats.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-slate-400 italic">No team members assigned.</td></tr>}
+                      </tbody>
+                  </table>
+              </div>
+          );
+      }
+      
+      if (userProfile?.role === 'lm') {
+           const myDms = allProfiles.filter(p => p.manager_id === user.id);
+           // Build tree
+           const tree = myDms.map(dm => {
+               const dmMrs = allProfiles.filter(p => p.manager_id === dm.id);
+               const mrStats = dmMrs.map(mr => ({
+                   ...mr,
+                   count: deliveries.filter(d => d.delivered_by === mr.id).length
+               }));
+               const total = mrStats.reduce((sum, item) => sum + item.count, 0);
+               return { dm, mrStats, total };
+           }).sort((a,b) => b.total - a.total);
+
+           return (
+               <div className="space-y-4">
+                   {tree.map(node => (
+                       <div key={node.dm.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                           <div className="bg-slate-50 p-3 flex justify-between items-center border-b border-slate-100">
+                               <div>
+                                   <h4 className="font-bold text-slate-800 text-sm">{node.dm.full_name} <span className="text-xs font-normal text-slate-500">(DM)</span></h4>
+                                   <p className="text-[10px] text-slate-400 uppercase font-bold">{node.mrStats.length} MRs Assigned</p>
+                               </div>
+                               <div className="bg-black text-[#FFC600] px-3 py-1 rounded text-xs font-black">{node.total}</div>
+                           </div>
+                           <div className="divide-y divide-slate-50">
+                               {node.mrStats.map(mr => (
+                                   <div key={mr.id} className="p-2 pl-4 flex justify-between items-center text-xs hover:bg-slate-50">
+                                       <span className="text-slate-600 font-medium">{mr.full_name}</span>
+                                       <span className="font-mono text-slate-400">{mr.count}</span>
+                                   </div>
+                               ))}
+                               {node.mrStats.length === 0 && <div className="p-2 text-center text-[10px] text-slate-400">No MRs in this district.</div>}
+                           </div>
+                       </div>
+                   ))}
+                   {tree.length === 0 && <div className="p-4 text-center text-slate-400 italic">No districts assigned.</div>}
+               </div>
+           );
+      }
+      return null;
+  };
+
   const getProductName = (id: string) => PRODUCTS.find(p => p.id === id)?.name || id;
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-black text-[#FFC600]"><Activity className="animate-spin w-10 h-10" /></div>;
@@ -841,6 +924,7 @@ const App: React.FC = () => {
   const canDeliver = userProfile?.role === 'mr' || userProfile?.role === 'admin';
   const canManageStock = userProfile?.role === 'mr' || userProfile?.role === 'admin';
   const isAdmin = userProfile?.role === 'admin';
+  const isReadOnly = userProfile?.role === 'dm' || userProfile?.role === 'lm';
 
   return (
     <div className="h-screen bg-slate-100 flex flex-col font-sans overflow-hidden relative">
@@ -861,7 +945,7 @@ const App: React.FC = () => {
       {installPrompt && (
           <div className="bg-black text-white p-3 flex justify-between items-center z-50 sticky top-0 shadow-lg">
               <div className="flex items-center gap-3">
-                  <img src="/icon.svg" className="w-8 h-8 rounded border border-slate-700" alt="Icon" />
+                  <img src="icon.svg" className="w-8 h-8 rounded border border-slate-700" alt="Icon" />
                   <div className="text-xs">
                       <p className="font-bold text-[#FFC600]">INSTALL S.P.I.N</p>
                       <p className="text-slate-400">Add Supply Network to your home screen.</p>
@@ -998,7 +1082,7 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center gap-3">
-              <img src="/icon.svg" className="w-10 h-10 rounded-lg border-2 border-[#FFC600]" alt="SPIN Logo" />
+              <img src="icon.svg" className="w-10 h-10 rounded-lg border-2 border-[#FFC600]" alt="SPIN Logo" />
               <div className="flex flex-col">
                 <span className="font-black text-2xl leading-none tracking-tighter">S.P.I.N</span>
                 <span className="text-[10px] font-bold text-[#FFC600] uppercase tracking-widest">Supply Insulin Pen Network</span>
@@ -1031,7 +1115,9 @@ const App: React.FC = () => {
           
           <div className="flex space-x-1 bg-white p-1 rounded-xl shadow-sm border border-slate-200 mb-8 w-full md:w-auto inline-flex overflow-x-auto">
             <button onClick={() => setActiveTab('dashboard')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'dashboard' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LayoutDashboard className="w-4 h-4" /> Dashboard</button>
-            <button onClick={() => setActiveTab('deliver')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'deliver' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Syringe className="w-4 h-4" /> Deliver Pen {!user && <Lock className="w-3 h-3 ml-1 opacity-50" />}</button>
+            {(userProfile?.role === 'mr' || userProfile?.role === 'admin') && (
+                <button onClick={() => setActiveTab('deliver')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'deliver' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Syringe className="w-4 h-4" /> Deliver Pen {!user && <Lock className="w-3 h-3 ml-1 opacity-50" />}</button>
+            )}
             <button onClick={() => setActiveTab('custody')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'custody' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Building2 className="w-4 h-4" /> Custody {!user && <Lock className="w-3 h-3 ml-1 opacity-50" />}</button>
             <button onClick={() => setActiveTab('database')} className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-bold uppercase tracking-wide transition-all whitespace-nowrap ${activeTab === 'database' ? 'bg-black text-[#FFC600] shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Database className="w-4 h-4" /> Database {!user && <Lock className="w-3 h-3 ml-1 opacity-50" />}</button>
             {isAdmin && (
@@ -1103,7 +1189,7 @@ const App: React.FC = () => {
                                          {productBreakdown.slice(0,4).map((p,i) => (
                                              <div key={i} className="flex items-center gap-1 text-[9px] uppercase font-bold text-slate-500">
                                                  <div className="w-2 h-2 rounded-full" style={{backgroundColor: PRODUCT_COLOR_MAP[p.id] || '#cbd5e1'}}></div>
-                                                 <span className="truncate">{p.name} ({p.value})</span>
+                                                 <span className="truncate">{p.name}: <span className="text-black">{p.value} ({p.percentage}%)</span></span>
                                              </div>
                                          ))}
                                      </div>
@@ -1148,6 +1234,17 @@ const App: React.FC = () => {
                         {/* ACTIVE CUSTODIES - STANDARD CARD */}
                         <div onClick={() => { setActiveTab('database'); setDbView('locations'); }} className="bg-white p-6 shadow-sm border-l-4 border-slate-900 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-500 delay-150 cursor-pointer hover:bg-slate-50 transition-colors group"><div><p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Locations</p><h3 className="text-3xl font-black text-slate-900">{custodies.length}</h3></div><div className="bg-slate-100 p-3 rounded-full group-hover:bg-slate-200"><Building2 className="w-6 h-6 text-slate-900" /></div></div>
                       </div>
+
+                      {/* Hierarchy Breakdown for Managers */}
+                      {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && (
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mt-6 animate-in slide-in-from-bottom-6">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                                <Network className="w-5 h-5 text-[#FFC600]" />
+                                {userProfile.role === 'lm' ? 'Regional Performance (Line Manager)' : 'Team Performance (District Manager)'}
+                            </h3>
+                            {renderTeamStats()}
+                        </div>
+                      )}
                   </>
               )}
             </div>
@@ -1289,7 +1386,10 @@ const App: React.FC = () => {
                              <table className="w-full text-left border-collapse">
                                  <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
                                      <tr>
-                                         {dbView === 'deliveries' && <><th className="p-4">Date</th><th className="p-4">Patient</th><th className="p-4">Product</th><th className="p-4">HCP</th><th className="p-4">Source</th><th className="p-4">Educator</th><th className="p-4 text-right">Actions</th></>}
+                                         {dbView === 'deliveries' && <><th className="p-4">Date</th><th className="p-4">Patient</th><th className="p-4">Product</th><th className="p-4">HCP</th><th className="p-4">Source</th><th className="p-4">Educator</th>
+                                         {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && <th className="p-4">Medical Rep</th>}
+                                         {userProfile?.role === 'lm' && <th className="p-4">District Mgr</th>}
+                                         <th className="p-4 text-right">Actions</th></>}
                                          {dbView === 'hcps' && <><th className="p-4">Doctor Name</th><th className="p-4">Specialty</th><th className="p-4">Hospital</th><th className="p-4 text-right">Actions</th></>}
                                          {dbView === 'locations' && <><th className="p-4">Name</th><th className="p-4">Type</th><th className="p-4">Stock</th><th className="p-4 text-right">Actions</th></>}
                                          {dbView === 'stock' && <><th className="p-4">Date</th><th className="p-4">Source / Destination</th><th className="p-4 text-center">Qty</th><th className="p-4 text-right">Actions</th></>}
@@ -1305,10 +1405,18 @@ const App: React.FC = () => {
                                              <td className="p-4 text-slate-600 text-xs">{item.hcp?.full_name}</td>
                                              <td className="p-4 text-slate-500 text-xs">{item.custody?.name}</td>
                                              <td className="p-4 text-slate-500 text-xs">{item.educator_name || '-'}</td>
+                                             
+                                             {(userProfile?.role === 'dm' || userProfile?.role === 'lm') && (
+                                                <td className="p-4 text-xs font-bold text-slate-700">{getMrAndDm(item.delivered_by).mrName}</td>
+                                             )}
+                                             {userProfile?.role === 'lm' && (
+                                                <td className="p-4 text-xs text-slate-600">{getMrAndDm(item.delivered_by).dmName}</td>
+                                             )}
+
                                              <td className="p-4 text-right">
                                                  <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                     <button onClick={() => openEditModal('deliveries', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>
-                                                     {(isAdmin || item.delivered_by === user.id) && <button onClick={() => handleDeleteItem('deliveries', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>}
+                                                     {!isReadOnly && <button onClick={() => openEditModal('deliveries', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>}
+                                                     {(isAdmin || (item.delivered_by === user.id && !isReadOnly)) && <button onClick={() => handleDeleteItem('deliveries', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>}
                                                  </div>
                                              </td>
                                          </tr>
@@ -1318,7 +1426,7 @@ const App: React.FC = () => {
                                              <td className="p-4 font-bold text-slate-900">{item.full_name}</td>
                                              <td className="p-4 text-slate-600">{item.specialty}</td>
                                              <td className="p-4 text-slate-600">{item.hospital}</td>
-                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal('hcps', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('hcps', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div></td>
+                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">{!isReadOnly && <><button onClick={() => openEditModal('hcps', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('hcps', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></>}</div></td>
                                          </tr>
                                      ))}
                                      {dbView === 'locations' && filterData(custodies).map((item: Custody) => (
@@ -1326,7 +1434,7 @@ const App: React.FC = () => {
                                              <td className="p-4 font-bold text-slate-900">{item.name}</td>
                                              <td className="p-4 text-xs uppercase font-bold text-slate-500">{item.type}</td>
                                              <td className="p-4 font-mono font-bold">{item.current_stock}</td>
-                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal('locations', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('locations', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div></td>
+                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">{!isReadOnly && <><button onClick={() => openEditModal('locations', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('locations', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></>}</div></td>
                                          </tr>
                                      ))}
                                      {dbView === 'stock' && filterData(visibleStock).map((item: StockTransaction) => (
@@ -1336,9 +1444,9 @@ const App: React.FC = () => {
                                              <td className={`p-4 font-mono font-bold text-center ${item.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{item.quantity > 0 ? '+' : ''}{item.quantity}</td>
                                              <td className="p-4 text-right">
                                                  <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                     {item.custody_id !== repCustody?.id && item.quantity < 0 && <button onClick={() => handleRetrieveStock(item)} title="Retrieve Stock" className="p-1 text-orange-500 hover:bg-orange-50 rounded"><Undo2 className="w-4 h-4" /></button>}
-                                                     <button onClick={() => openEditModal('tx', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>
-                                                     <button onClick={() => handleDeleteItem('tx', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>
+                                                     {!isReadOnly && item.custody_id !== repCustody?.id && item.quantity < 0 && <button onClick={() => handleRetrieveStock(item)} title="Retrieve Stock" className="p-1 text-orange-500 hover:bg-orange-50 rounded"><Undo2 className="w-4 h-4" /></button>}
+                                                     {!isReadOnly && <button onClick={() => openEditModal('tx', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button>}
+                                                     {!isReadOnly && <button onClick={() => handleDeleteItem('tx', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>}
                                                  </div>
                                              </td>
                                          </tr>
@@ -1348,7 +1456,7 @@ const App: React.FC = () => {
                                              <td className="p-4 font-bold text-slate-900">{item.full_name}</td>
                                              <td className="p-4 font-mono text-slate-600 text-xs">{item.national_id}</td>
                                              <td className="p-4 font-mono text-slate-600 text-xs">{item.phone_number}</td>
-                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal('patients', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('patients', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></div></td>
+                                             <td className="p-4 text-right"><div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">{!isReadOnly && <><button onClick={() => openEditModal('patients', item)} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteItem('patients', item.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button></>}</div></td>
                                          </tr>
                                      ))}
                                      {/* Empty States */}
@@ -1483,7 +1591,7 @@ const App: React.FC = () => {
       <footer className="bg-white border-t border-slate-200 py-0.5 shrink-0 z-40 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] relative">
         <div className="max-w-7xl mx-auto px-4 flex justify-between items-center h-6">
             <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-2">
-                <img src="/icon.svg" className="w-4 h-4 rounded-sm border border-slate-300" alt="Logo" />
+                <img src="icon.svg" className="w-4 h-4 rounded-sm border border-slate-300" alt="Logo" />
                 <span>SPIN v{METADATA.version}</span>
             </div>
             <div className="text-[10px] text-slate-400">
