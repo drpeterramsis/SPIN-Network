@@ -60,7 +60,6 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
 
         if (isSignUp) {
             // 1. Sign Up
-            // We pass metadata, but we mainly rely on the profiles table for app logic
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email,
                 password,
@@ -76,19 +75,17 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             if (!authData.user) throw new Error("Registration failed - No user returned");
 
             // 2. Determine Role & Access
-            // If it's the hardcoded admin email, force Admin role and Yes access.
-            // Otherwise, use the selected role and Pending access.
             const finalRole = isAdminEmail ? 'admin' : role;
-            const finalAccess = isAdminEmail ? 'yes' : 'pending';
+            // Admins get immediate access, others default to 'no' (pending)
+            const finalAccess = isAdminEmail ? 'yes' : 'no'; 
 
             // 3. Create Profile in the 'profiles' table
-            // This ensures the user is actually inserted into the profiles table
             const { error: profileError } = await supabase.from('profiles').upsert([
                 {
                     id: authData.user.id,
                     full_name: fullName,
                     employee_id: employeeId,
-                    email: email, // Maps to 'email' in schema
+                    corporate_email: email, 
                     role: finalRole,
                     access: finalAccess,
                     manager_id: null 
@@ -105,7 +102,8 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                 } else {
                     msg += profileError.message;
                 }
-                // Don't throw here if the user was created, just warn
+                // Attempt to cleanup auth user if profile failed
+                // await supabase.auth.admin.deleteUser(authData.user.id);
                 setError(msg);
                 setLoading(false);
                 return; 
@@ -114,7 +112,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
             if (isAdminEmail) {
                 setSuccessMsg("Admin account created and auto-approved. Please Login.");
             } else {
-                setSuccessMsg("Registration successful. Please wait for admin approval (Status: Pending).");
+                setSuccessMsg("Registration successful. Please wait for admin approval.");
             }
             
             setIsSignUp(false); 
@@ -147,7 +145,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
                          id: data.user.id,
                          full_name: 'Super Admin',
                          employee_id: 'ADMIN-001',
-                         email: 'admin@spin.com',
+                         corporate_email: 'admin@spin.com',
                          role: 'admin',
                          access: 'yes'
                      }], { onConflict: 'id' });

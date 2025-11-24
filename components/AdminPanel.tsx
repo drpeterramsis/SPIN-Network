@@ -48,6 +48,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) =>
   const filteredProfiles = profiles.filter(p => 
       (p.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
       (p.employee_id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.corporate_email && p.corporate_email.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (p.email && p.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
@@ -96,7 +97,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) =>
                                         <div>
                                             <div className="font-bold text-slate-900 text-sm">{user.full_name}</div>
                                             <div className="text-xs text-slate-400 font-mono">{user.employee_id}</div>
-                                            <div className="text-[10px] text-slate-400">{user.email}</div>
+                                            <div className="text-[10px] text-slate-400">{user.corporate_email || user.email}</div>
                                         </div>
                                     </div>
                                 </td>
@@ -161,9 +162,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ profiles, onUpdate }) =>
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
                                         <button 
-                                            onClick={() => handleUpdate(user.id, { access: user.access === 'yes' ? 'pending' : 'yes' })}
+                                            onClick={() => handleUpdate(user.id, { access: user.access === 'yes' ? 'no' : 'yes' })}
                                             className={`relative w-12 h-6 rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${user.access === 'yes' ? 'bg-[#FFC600]' : 'bg-slate-200'}`}
-                                            disabled={isUpdating || user.email === 'admin@spin.com'}
+                                            disabled={isUpdating || user.corporate_email === 'admin@spin.com'}
                                             title="Toggle Access"
                                         >
                                             <span 

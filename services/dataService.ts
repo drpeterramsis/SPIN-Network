@@ -1,4 +1,5 @@
 
+
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS, UserProfile } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -69,11 +70,11 @@ export const dataService = {
           const { data, error } = await supabase.from('profiles').select('*').order('full_name');
           if (error) throw error;
           
-          // Fallback logic for old profiles without roles
           return (data || []).map((p: any) => ({
               ...p,
-              role: p.role || 'mr', // Default to MR if undefined
-              access: p.access || 'pending'
+              email: p.corporate_email || p.email, // Map schema column
+              role: p.role || 'mr',
+              access: p.access || 'no'
           }));
       } else {
           return JSON.parse(localStorage.getItem(KEYS.PROFILES) || '[]');

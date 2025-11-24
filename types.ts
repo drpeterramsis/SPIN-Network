@@ -16,6 +16,7 @@ export const PRODUCTS: Product[] = [
 export interface UserProfile {
   id: string;
   email?: string;
+  corporate_email?: string; // Mapped to email in UI usually
   full_name: string;
   employee_id: string;
   role: UserRole;
