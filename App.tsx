@@ -59,8 +59,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.041",
-  version: "2.0.041"
+  name: "S.P.I.N v2.0.042",
+  version: "2.0.042"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -165,10 +165,6 @@ export const App: React.FC = () => {
 
   const [showProfileModal, setShowProfileModal] = useState(false);
   
-  // Database Filters
-  const [filterDmId, setFilterDmId] = useState<string>('all');
-  const [filterMrId, setFilterMrId] = useState<string>('all');
-
   const [hcpSpecialties, setHcpSpecialties] = useState<string[]>([]);
   const [hcpHospitals, setHcpHospitals] = useState<string[]>([]);
 
@@ -337,9 +333,57 @@ export const App: React.FC = () => {
     }
   }, [user, loadData]);
 
+  const handleLogout = async () => {
+      await supabase?.auth.signOut();
+      setUser(null);
+      setUserProfile(null);
+      setShowProfileModal(false);
+      setActiveTab('dashboard');
+  };
+
   const myStockLevel = useMemo(() => {
     return repCustody?.current_stock || 0;
   }, [repCustody]);
+
+  // Manager View Calculations
+  const managerStockData = useMemo(() => {
+    if (!userProfile || (userProfile.role !== 'dm' && userProfile.role !== 'lm')) return [];
+
+    if (userProfile.role === 'dm') {
+        // Direct Reports (MRs)
+        const myMrs = allProfiles.filter(p => p.manager_id === user.id && p.role === 'mr');
+        return myMrs.map(mr => {
+            const c = custodies.find(item => item.owner_id === mr.id && item.type === 'rep');
+            return {
+                id: mr.id,
+                name: mr.full_name,
+                role: 'Medical Rep',
+                stock: c?.current_stock || 0
+            };
+        }).sort((a,b) => b.stock - a.stock);
+    }
+
+    if (userProfile.role === 'lm') {
+        // Direct Reports (DMs) -> Aggregate their teams
+        const myDms = allProfiles.filter(p => p.manager_id === user.id && p.role === 'dm');
+        return myDms.map(dm => {
+            const teamMrs = allProfiles.filter(p => p.manager_id === dm.id && p.role === 'mr');
+            const totalStock = teamMrs.reduce((acc, mr) => {
+                const c = custodies.find(item => item.owner_id === mr.id && item.type === 'rep');
+                return acc + (c?.current_stock || 0);
+            }, 0);
+            
+            return {
+                id: dm.id,
+                name: dm.full_name,
+                role: 'District Manager',
+                subordinates: teamMrs.length,
+                stock: totalStock
+            };
+        }).sort((a,b) => b.stock - a.stock);
+    }
+    return [];
+  }, [userProfile, allProfiles, custodies, user]);
 
   const getVisibleDeliveries = () => {
       if (!userProfile) return [];
@@ -587,11 +631,7 @@ export const App: React.FC = () => {
             isOpen={showProfileModal} 
             onClose={() => setShowProfileModal(false)} 
             user={user}
-            onLogout={async () => {
-                await supabase?.auth.signOut();
-                setUser(null);
-                setShowProfileModal(false);
-            }}
+            onLogout={handleLogout}
         />
 
         {!user ? (
@@ -658,7 +698,8 @@ export const App: React.FC = () => {
                         <div className="max-w-7xl mx-auto flex space-x-1">
                             {[
                                 { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-                                { id: 'deliver', label: 'New Delivery', icon: Plus },
+                                // DELIVERY TAB: Only for MRs and Admins
+                                ...(userProfile?.role === 'mr' || userProfile?.role === 'admin' ? [{ id: 'deliver', label: 'New Delivery', icon: Plus }] : []),
                                 { id: 'custody', label: 'Inventory', icon: Package },
                                 { id: 'database', label: 'Database', icon: Database },
                                 { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -700,9 +741,14 @@ export const App: React.FC = () => {
                                 <p className="text-slate-500 mb-6">
                                     Your account has been created but requires administrator approval before you can access the system.
                                 </p>
-                                <button onClick={() => window.location.reload()} className="text-sm font-bold text-blue-600 hover:underline">
-                                    Check Status Again
-                                </button>
+                                <div className="flex flex-col gap-3">
+                                    <button onClick={() => window.location.reload()} className="w-full bg-slate-100 py-2 rounded text-sm font-bold text-slate-700 hover:bg-slate-200">
+                                        Check Status Again
+                                    </button>
+                                    <button onClick={handleLogout} className="w-full bg-black py-2 rounded text-sm font-bold text-white hover:bg-slate-800 flex items-center justify-center gap-2">
+                                        <LogOut className="w-4 h-4"/> Log Out
+                                    </button>
+                                </div>
                             </div>
                         )}
 
@@ -714,11 +760,19 @@ export const App: React.FC = () => {
                                         
                                         {/* Stats Row */}
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                            {/* Stock Widget - Show Personal for MR/Admin, Team for Manager */}
                                             <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200 flex flex-col justify-between">
                                                 <div className="flex justify-between items-start mb-4">
                                                     <div>
-                                                        <p className="text-xs font-bold text-slate-400 uppercase">My Stock</p>
-                                                        <h3 className="text-2xl font-black text-slate-900 mt-1">{myStockLevel}</h3>
+                                                        <p className="text-xs font-bold text-slate-400 uppercase">
+                                                            {(userProfile.role === 'dm' || userProfile.role === 'lm') ? 'Team Total Stock' : 'My Stock'}
+                                                        </p>
+                                                        <h3 className="text-2xl font-black text-slate-900 mt-1">
+                                                            {(userProfile.role === 'dm' || userProfile.role === 'lm') 
+                                                                ? managerStockData.reduce((acc, i) => acc + i.stock, 0)
+                                                                : myStockLevel
+                                                            }
+                                                        </h3>
                                                     </div>
                                                     <div className="bg-yellow-100 p-2 rounded text-yellow-700">
                                                         <Package className="w-5 h-5" />
@@ -825,7 +879,7 @@ export const App: React.FC = () => {
                                 )}
 
                                 {/* DELIVER TAB - Re-implemented */}
-                                {activeTab === 'deliver' && (
+                                {activeTab === 'deliver' && (userProfile?.role === 'mr' || userProfile?.role === 'admin') && (
                                     <div className="max-w-2xl mx-auto animate-in fade-in">
                                          {/* Step 1: Search */}
                                          {step === 1 && (
@@ -1017,104 +1071,162 @@ export const App: React.FC = () => {
                                     </div>
                                 )}
                                 
-                                {/* CUSTODY TAB - Re-implemented */}
+                                {/* CUSTODY TAB - Re-implemented with Role Based View */}
                                 {activeTab === 'custody' && (
                                     <div className="space-y-6 animate-in fade-in">
-                                         {/* Top Stats */}
+                                         {/* Header */}
                                          <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
                                              <div className="flex items-center gap-4">
                                                  <div className="w-16 h-16 bg-slate-900 text-[#FFC600] rounded-full flex items-center justify-center">
                                                      <Package className="w-8 h-8" />
                                                  </div>
                                                  <div>
-                                                     <h2 className="text-2xl font-black text-slate-900">MY INVENTORY</h2>
-                                                     <p className="text-slate-500 text-sm">Manage your stock levels</p>
+                                                     <h2 className="text-2xl font-black text-slate-900">
+                                                        {(userProfile.role === 'dm' || userProfile.role === 'lm') ? 'TEAM INVENTORY' : 'MY INVENTORY'}
+                                                     </h2>
+                                                     <p className="text-slate-500 text-sm">
+                                                        {(userProfile.role === 'dm' || userProfile.role === 'lm') ? 'Stock overview of your network' : 'Manage your stock levels'}
+                                                     </p>
                                                  </div>
                                              </div>
                                              <div className="text-center md:text-right bg-slate-50 px-6 py-4 rounded border border-slate-100">
-                                                 <span className="block text-4xl font-black text-slate-900">{myStockLevel}</span>
-                                                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pens On Hand</span>
+                                                 <span className="block text-4xl font-black text-slate-900">
+                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') 
+                                                        ? managerStockData.reduce((acc, i) => acc + i.stock, 0)
+                                                        : myStockLevel
+                                                     }
+                                                 </span>
+                                                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Pens</span>
                                              </div>
                                          </div>
 
-                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                             {/* Receive Form */}
-                                             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-                                                 <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
-                                                     Receive Stock
-                                                 </h3>
-                                                 <form onSubmit={handleReceiveStock} className="space-y-4">
-                                                     <div>
-                                                         <label className="text-xs font-bold text-slate-500 uppercase">Quantity Received</label>
-                                                         <input 
-                                                             type="number" 
-                                                             min="1"
-                                                             required
-                                                             className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                             value={receiveForm.quantity}
-                                                             onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
-                                                         />
-                                                     </div>
-                                                     <div>
-                                                         <label className="text-xs font-bold text-slate-500 uppercase">Educator Name (Source)</label>
-                                                         <input 
-                                                             type="text" 
-                                                             list="educators"
-                                                             required
-                                                             className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                             value={receiveForm.educatorName}
-                                                             onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
-                                                             placeholder="e.g. Nurse Joy"
-                                                         />
-                                                         <datalist id="educators">
-                                                             {educatorSuggestions.map(s => <option key={s} value={s} />)}
-                                                         </datalist>
-                                                     </div>
-                                                     <div>
-                                                         <label className="text-xs font-bold text-slate-500 uppercase">Date</label>
-                                                         <input 
-                                                             type="date" 
-                                                             required
-                                                             className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                             value={receiveForm.date}
-                                                             onChange={e => setReceiveForm({...receiveForm, date: e.target.value})}
-                                                         />
-                                                     </div>
-                                                     <button 
-                                                         type="submit"
-                                                         disabled={isSubmitting}
-                                                         className="w-full bg-black text-white font-bold py-3 rounded hover:bg-slate-800 transition-colors uppercase text-sm tracking-wide"
-                                                     >
-                                                         {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Log Receipt'}
-                                                     </button>
-                                                 </form>
-                                             </div>
-
-                                             {/* Recent Transactions */}
-                                             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col">
-                                                 <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
-                                                     Stock History
-                                                 </h3>
-                                                 <div className="flex-1 overflow-y-auto max-h-[300px] space-y-3">
-                                                     {stockTransactions.filter(t => t.custody_id === repCustody?.id).map(tx => (
-                                                         <div key={tx.id} className="flex justify-between items-center text-sm p-3 bg-slate-50 rounded border border-slate-100">
-                                                             <div>
-                                                                 <span className={`font-bold ${tx.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                     {tx.quantity > 0 ? '+' : ''}{tx.quantity}
-                                                                 </span>
-                                                                 <span className="text-slate-500 ml-2">{formatDateFriendly(tx.transaction_date)}</span>
-                                                             </div>
-                                                             <div className="text-xs text-slate-400 max-w-[150px] truncate" title={tx.source}>
-                                                                 {tx.source}
-                                                             </div>
+                                         {/* ROLE BASED CONTENT */}
+                                         
+                                         {/* 1. MR & ADMIN VIEW: Interactive */}
+                                         {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                 {/* Receive Form */}
+                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
+                                                         Receive Stock
+                                                     </h3>
+                                                     <form onSubmit={handleReceiveStock} className="space-y-4">
+                                                         <div>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Quantity Received</label>
+                                                             <input 
+                                                                 type="number" 
+                                                                 min="1"
+                                                                 required
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={receiveForm.quantity}
+                                                                 onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
+                                                             />
                                                          </div>
-                                                     ))}
-                                                     {stockTransactions.filter(t => t.custody_id === repCustody?.id).length === 0 && (
-                                                         <p className="text-center text-slate-400 py-4 text-xs">No transactions found.</p>
-                                                     )}
+                                                         <div>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Educator Name (Source)</label>
+                                                             <input 
+                                                                 type="text" 
+                                                                 list="educators"
+                                                                 required
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={receiveForm.educatorName}
+                                                                 onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
+                                                                 placeholder="e.g. Nurse Joy"
+                                                             />
+                                                             <datalist id="educators">
+                                                                 {educatorSuggestions.map(s => <option key={s} value={s} />)}
+                                                             </datalist>
+                                                         </div>
+                                                         <div>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Date</label>
+                                                             <input 
+                                                                 type="date" 
+                                                                 required
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={receiveForm.date}
+                                                                 onChange={e => setReceiveForm({...receiveForm, date: e.target.value})}
+                                                             />
+                                                         </div>
+                                                         <button 
+                                                             type="submit"
+                                                             disabled={isSubmitting}
+                                                             className="w-full bg-black text-white font-bold py-3 rounded hover:bg-slate-800 transition-colors uppercase text-sm tracking-wide"
+                                                         >
+                                                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Log Receipt'}
+                                                         </button>
+                                                     </form>
                                                  </div>
-                                             </div>
-                                         </div>
+
+                                                 {/* Recent Transactions */}
+                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col">
+                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
+                                                         Stock History
+                                                     </h3>
+                                                     <div className="flex-1 overflow-y-auto max-h-[300px] space-y-3">
+                                                         {stockTransactions.filter(t => t.custody_id === repCustody?.id).map(tx => (
+                                                             <div key={tx.id} className="flex justify-between items-center text-sm p-3 bg-slate-50 rounded border border-slate-100">
+                                                                 <div>
+                                                                     <span className={`font-bold ${tx.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                         {tx.quantity > 0 ? '+' : ''}{tx.quantity}
+                                                                     </span>
+                                                                     <span className="text-slate-500 ml-2">{formatDateFriendly(tx.transaction_date)}</span>
+                                                                 </div>
+                                                                 <div className="text-xs text-slate-400 max-w-[150px] truncate" title={tx.source}>
+                                                                     {tx.source}
+                                                                 </div>
+                                                             </div>
+                                                         ))}
+                                                         {stockTransactions.filter(t => t.custody_id === repCustody?.id).length === 0 && (
+                                                             <p className="text-center text-slate-400 py-4 text-xs">No transactions found.</p>
+                                                         )}
+                                                     </div>
+                                                 </div>
+                                            </div>
+                                         )}
+
+                                         {/* 2. DM & LM VIEW: Read Only Summary */}
+                                         {(userProfile.role === 'dm' || userProfile.role === 'lm') && (
+                                            <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                                                <div className="p-4 bg-slate-50 border-b border-slate-200">
+                                                    <h3 className="font-bold text-slate-900 uppercase text-sm">
+                                                        {userProfile.role === 'dm' ? 'District Team Stock' : 'Regional Stock Overview'}
+                                                    </h3>
+                                                </div>
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-left text-sm">
+                                                        <thead className="bg-slate-100 text-slate-500 uppercase text-xs font-bold border-b border-slate-200">
+                                                            <tr>
+                                                                <th className="px-6 py-3">Team Member</th>
+                                                                <th className="px-6 py-3">Role</th>
+                                                                {userProfile.role === 'lm' && <th className="px-6 py-3">Team Size</th>}
+                                                                <th className="px-6 py-3 text-right">Current Stock</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-slate-100">
+                                                            {managerStockData.map(item => (
+                                                                <tr key={item.id} className="hover:bg-slate-50">
+                                                                    <td className="px-6 py-4 font-bold text-slate-900">{item.name}</td>
+                                                                    <td className="px-6 py-4 text-slate-500 text-xs uppercase">{item.role}</td>
+                                                                    {userProfile.role === 'lm' && (
+                                                                        <td className="px-6 py-4 text-slate-500">{item.subordinates} MRs</td>
+                                                                    )}
+                                                                    <td className="px-6 py-4 text-right font-mono font-bold">
+                                                                        {item.stock} <span className="text-xs text-slate-400 font-sans">pens</span>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                            {managerStockData.length === 0 && (
+                                                                <tr>
+                                                                    <td colSpan={4} className="p-8 text-center text-slate-400">
+                                                                        No team members assigned or no stock data available.
+                                                                    </td>
+                                                                </tr>
+                                                            )}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                         )}
                                     </div>
                                 )}
 
