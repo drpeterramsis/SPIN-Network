@@ -43,8 +43,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.044",
-  version: "2.0.044"
+  name: "S.P.I.N v2.0.045",
+  version: "2.0.045"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -177,6 +177,7 @@ export const App: React.FC = () => {
   // Location Creation
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [newLocationName, setNewLocationName] = useState('');
+  const [newLocationType, setNewLocationType] = useState<'clinic' | 'pharmacy'>('clinic');
 
   const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '', date: getTodayString() });
   
@@ -502,7 +503,7 @@ export const App: React.FC = () => {
       try {
           const newLoc = await dataService.createCustody({
               name: newLocationName,
-              type: 'clinic', 
+              type: newLocationType, 
               created_at: new Date().toISOString(),
               owner_id: user.id // Associate with creating Rep
           });
@@ -510,6 +511,7 @@ export const App: React.FC = () => {
           setTransferForm(prev => ({ ...prev, targetCustodyId: newLoc.id }));
           setShowLocationModal(false);
           setNewLocationName('');
+          setNewLocationType('clinic');
           showToast("New location created", "success");
       } catch (e: any) {
           showToast(e.message, "error");
@@ -800,16 +802,43 @@ export const App: React.FC = () => {
                         <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
                             <MapPin className="w-5 h-5 text-[#FFC600]"/> New Transfer Location
                         </h4>
-                        <p className="text-xs text-slate-500 mb-4">Create a new clinic or location to transfer stock to.</p>
+                        <p className="text-xs text-slate-500 mb-4">Create a new clinic or pharmacy to transfer stock to.</p>
                         <div className="space-y-4">
                             <input 
                                 className="w-full border p-3 rounded bg-slate-50 outline-none focus:border-[#FFC600]" 
-                                placeholder="Clinic or Location Name" 
+                                placeholder="Location Name" 
                                 value={newLocationName} 
                                 onChange={e => setNewLocationName(e.target.value)}
                                 autoFocus
                             />
-                            <div className="flex gap-2">
+                            
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Location Type</label>
+                                <div className="flex gap-4">
+                                    <label className="flex items-center gap-2 cursor-pointer p-2 border rounded hover:bg-slate-50 flex-1">
+                                        <input 
+                                            type="radio" 
+                                            name="locType" 
+                                            checked={newLocationType === 'clinic'} 
+                                            onChange={() => setNewLocationType('clinic')}
+                                            className="accent-black w-4 h-4"
+                                        />
+                                        <span className="text-sm font-medium">Clinic</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer p-2 border rounded hover:bg-slate-50 flex-1">
+                                        <input 
+                                            type="radio" 
+                                            name="locType" 
+                                            checked={newLocationType === 'pharmacy'} 
+                                            onChange={() => setNewLocationType('pharmacy')}
+                                            className="accent-black w-4 h-4"
+                                        />
+                                        <span className="text-sm font-medium">Pharmacy</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-2 pt-2">
                                 <button 
                                     onClick={() => setShowLocationModal(false)}
                                     className="flex-1 bg-slate-100 py-3 rounded font-bold text-sm uppercase text-slate-500 hover:text-black hover:bg-slate-200"
@@ -1319,6 +1348,16 @@ export const App: React.FC = () => {
                                                              />
                                                          </div>
                                                          <div>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Date Received</label>
+                                                             <input 
+                                                                 type="date"
+                                                                 required
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={receiveForm.date}
+                                                                 onChange={e => setReceiveForm({...receiveForm, date: e.target.value})}
+                                                             />
+                                                         </div>
+                                                         <div>
                                                              <label className="text-xs font-bold text-slate-500 uppercase">From Educator</label>
                                                              <input 
                                                                  type="text" 
@@ -1359,6 +1398,16 @@ export const App: React.FC = () => {
                                                                  className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
                                                                  value={transferForm.quantity}
                                                                  onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
+                                                             />
+                                                         </div>
+                                                         <div>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Transfer Date</label>
+                                                             <input 
+                                                                 type="date"
+                                                                 required
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={transferForm.date}
+                                                                 onChange={e => setTransferForm({...transferForm, date: e.target.value})}
                                                              />
                                                          </div>
                                                          <div>

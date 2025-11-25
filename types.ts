@@ -44,7 +44,7 @@ export interface HCP {
 export interface Custody {
   id: string;
   name: string;
-  type: 'rep' | 'clinic';
+  type: 'rep' | 'clinic' | 'pharmacy';
   created_at: string;
   current_stock: number;
   owner_id?: string; // Critical for Rep inventory linking
