@@ -7,10 +7,8 @@ import { formatDateFriendly, getTodayString } from './utils/time';
 import { Delivery, Patient, HCP, Custody, PRODUCTS, StockTransaction, UserProfile } from './types';
 import { 
   LogOut, 
-  LogIn,
   Plus, 
   Search,
-  Users, 
   Package, 
   Activity,
   AlertTriangle,
@@ -21,31 +19,16 @@ import {
   Lock,
   BarChart3,
   UserCircle,
-  Stethoscope,
-  Building2,
-  ArrowRight,
-  Briefcase,
-  X,
-  Undo2,
-  History,
-  Pencil,
-  Save,
-  Trash2,
-  Info,
-  Download,
-  Loader2,
-  RefreshCw,
-  ChevronDown,
-  ChevronUp,
-  Filter,
-  Maximize2,
-  Minimize2,
-  MapPin,
-  TrendingUp,
-  List,
-  Sparkles,
   Network,
-  PieChart
+  PieChart,
+  ArrowRight,
+  History,
+  X,
+  Loader2,
+  Trash2,
+  Pencil,
+  Info,
+  Truck
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -59,8 +42,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.042",
-  version: "2.0.042"
+  name: "S.P.I.N v2.0.043",
+  version: "2.0.043"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -165,9 +148,10 @@ export const App: React.FC = () => {
 
   const [showProfileModal, setShowProfileModal] = useState(false);
   
-  const [hcpSpecialties, setHcpSpecialties] = useState<string[]>([]);
-  const [hcpHospitals, setHcpHospitals] = useState<string[]>([]);
-
+  // Edit Modal State
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  
   const [searchTerm, setSearchTerm] = useState('');
 
   const [step, setStep] = useState(1);
@@ -182,7 +166,6 @@ export const App: React.FC = () => {
   
   const [deliveryDate, setDeliveryDate] = useState(getTodayString());
   const [rxDate, setRxDate] = useState('');
-  const [educatorName, setEducatorName] = useState('');
   const [educatorSuggestions, setEducatorSuggestions] = useState<string[]>([]);
   
   const [duplicateWarning, setDuplicateWarning] = useState(false);
@@ -191,6 +174,9 @@ export const App: React.FC = () => {
   const [newHCP, setNewHCP] = useState({ full_name: '', specialty: '', hospital: '' });
 
   const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '', date: getTodayString() });
+  
+  // Transfer Form State
+  const [transferForm, setTransferForm] = useState({ quantity: 0, targetCustodyId: '', date: getTodayString() });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -206,13 +192,6 @@ export const App: React.FC = () => {
     window.addEventListener('beforeinstallprompt', handler);
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
-
-  const handleInstallClick = () => {
-    if(installPrompt) {
-        installPrompt.prompt();
-        setInstallPrompt(null);
-    }
-  };
 
   useEffect(() => {
     const checkSession = async () => {
@@ -284,16 +263,6 @@ export const App: React.FC = () => {
 
       let repC = c.find(x => x.type === 'rep' && x.owner_id === user.id) || null;
       if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
-          const orphan = c.find(x => x.type === 'rep' && x.name === 'My Rep Inventory' && !x.owner_id);
-          if (orphan) {
-              try {
-                  await dataService.updateCustody(orphan.id, { owner_id: user.id });
-                  repC = { ...orphan, owner_id: user.id };
-              } catch(e) { console.error("Claim failed", e); }
-          }
-      }
-
-      if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
           try {
               repC = await dataService.ensureRepCustody(user.id);
               if (repC) setCustodies([...c, repC]);
@@ -315,12 +284,6 @@ export const App: React.FC = () => {
           }
       });
       setEducatorSuggestions(Array.from(educatorSet).sort());
-
-      const specSet = new Set<string>(h.map(i => i.specialty).filter(Boolean) as string[]);
-      setHcpSpecialties(Array.from(specSet).sort());
-      
-      const hospSet = new Set<string>(h.map(i => i.hospital).filter(Boolean) as string[]);
-      setHcpHospitals(Array.from(hospSet).sort());
 
     } catch (error) {
       console.error("Critical Load error", error);
@@ -345,6 +308,21 @@ export const App: React.FC = () => {
     return repCustody?.current_stock || 0;
   }, [repCustody]);
 
+  // Helper to get hierarchy info
+  const getUserContext = useCallback((userId: string) => {
+      const prof = allProfiles.find(p => p.id === userId);
+      if (!prof) return { mr: 'Unknown', dm: '-', lm: '-' };
+      
+      const dm = allProfiles.find(p => p.id === prof.manager_id);
+      const lm = dm ? allProfiles.find(p => p.id === dm.manager_id) : null;
+      
+      return {
+          mr: prof.full_name,
+          dm: dm?.full_name || '-',
+          lm: lm?.full_name || '-'
+      };
+  }, [allProfiles]);
+
   // Manager View Calculations
   const managerStockData = useMemo(() => {
     if (!userProfile || (userProfile.role !== 'dm' && userProfile.role !== 'lm')) return [];
@@ -358,29 +336,38 @@ export const App: React.FC = () => {
                 id: mr.id,
                 name: mr.full_name,
                 role: 'Medical Rep',
+                manager_name: userProfile.full_name,
                 stock: c?.current_stock || 0
             };
         }).sort((a,b) => b.stock - a.stock);
     }
 
     if (userProfile.role === 'lm') {
-        // Direct Reports (DMs) -> Aggregate their teams
+        // Flattened view: All MRs under my DMs
         const myDms = allProfiles.filter(p => p.manager_id === user.id && p.role === 'dm');
-        return myDms.map(dm => {
+        let flattenedMrs: any[] = [];
+        
+        myDms.forEach(dm => {
             const teamMrs = allProfiles.filter(p => p.manager_id === dm.id && p.role === 'mr');
-            const totalStock = teamMrs.reduce((acc, mr) => {
+            const mrData = teamMrs.map(mr => {
                 const c = custodies.find(item => item.owner_id === mr.id && item.type === 'rep');
-                return acc + (c?.current_stock || 0);
-            }, 0);
-            
-            return {
-                id: dm.id,
-                name: dm.full_name,
-                role: 'District Manager',
-                subordinates: teamMrs.length,
-                stock: totalStock
-            };
-        }).sort((a,b) => b.stock - a.stock);
+                return {
+                    id: mr.id,
+                    name: mr.full_name,
+                    role: 'Medical Rep',
+                    manager_name: dm.full_name,
+                    stock: c?.current_stock || 0
+                };
+            });
+            flattenedMrs = [...flattenedMrs, ...mrData];
+        });
+
+        return flattenedMrs.sort((a, b) => {
+            // Sort by Manager Name then Stock
+            if (a.manager_name < b.manager_name) return -1;
+            if (a.manager_name > b.manager_name) return 1;
+            return b.stock - a.stock;
+        });
     }
     return [];
   }, [userProfile, allProfiles, custodies, user]);
@@ -523,7 +510,6 @@ export const App: React.FC = () => {
           return;
       }
       
-      // Stock Check
       if (selectedCustody) {
           const custody = custodies.find(c => c.id === selectedCustody);
           if (custody && (custody.current_stock || 0) < 1) {
@@ -541,7 +527,7 @@ export const App: React.FC = () => {
               patient_id: foundPatient.id,
               hcp_id: selectedHCP,
               product_id: selectedProduct,
-              quantity: 1, // Fixed to 1 pen per delivery logic usually, or make adjustable
+              quantity: 1, 
               delivered_by: user.id,
               delivery_date: deliveryDate,
               rx_date: rxDate || undefined,
@@ -550,7 +536,6 @@ export const App: React.FC = () => {
           
           showToast("Delivery logged successfully", "success");
           
-          // Reset
           setStep(1);
           setNidSearch('');
           setFoundPatient(null);
@@ -569,14 +554,8 @@ export const App: React.FC = () => {
       e.preventDefault();
       setIsSubmitting(true);
       try {
-        let targetRep = await dataService.getRepCustody(user.id);
-        if (!targetRep) {
-            targetRep = await dataService.ensureRepCustody(user.id);
-            setRepCustody(targetRep);
-            if(targetRep) setCustodies(prev => [...prev, targetRep!]);
-        }
-
-        if (!targetRep) throw new Error("My Inventory could not be found or initialized. Please refresh the page.");
+        let targetRep = repCustody;
+        if (!targetRep) throw new Error("Inventory not found");
 
         const { quantity, educatorName, date } = receiveForm;
         if (!quantity) {
@@ -595,6 +574,103 @@ export const App: React.FC = () => {
         await loadData(); 
       } catch (err: any) {
           showToast(err.message, "error");
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+
+  const handleTransferStock = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsSubmitting(true);
+      try {
+          if (!repCustody) throw new Error("Source inventory not found");
+          const { quantity, targetCustodyId, date } = transferForm;
+          
+          if (!targetCustodyId) {
+              showToast("Please select a destination", "error");
+              return;
+          }
+          if (quantity > (repCustody.current_stock || 0)) {
+              showToast("Insufficient stock for transfer", "error");
+              return;
+          }
+
+          await dataService.processStockTransaction(
+              targetCustodyId,
+              Number(quantity),
+              date || getTodayString(),
+              "Transfer from Rep",
+              repCustody.id
+          );
+          showToast("Stock transferred successfully", "success");
+          setTransferForm({ quantity: 0, targetCustodyId: '', date: getTodayString() });
+          await loadData();
+      } catch (err: any) {
+          showToast(err.message, "error");
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+
+  const handleDeleteItem = async (type: DBView, id: string) => {
+      if (!window.confirm("Are you sure you want to delete this record?")) return;
+      try {
+          if (type === 'deliveries') await dataService.deleteDelivery(id);
+          if (type === 'patients') await dataService.deletePatient(id);
+          if (type === 'hcps') await dataService.deleteHCP(id);
+          if (type === 'stock') await dataService.deleteStockTransaction(id);
+          if (type === 'locations') await dataService.deleteCustody(id);
+          
+          showToast("Record deleted", "success");
+          await loadData();
+      } catch (e: any) {
+          showToast("Delete failed: " + e.message, "error");
+      }
+  };
+
+  const openEditModal = (item: any, type: DBView) => {
+      setEditingItem({...item}); // copy
+      setShowEditModal(true);
+  };
+
+  const handleSaveEdit = async () => {
+      if (!editingItem) return;
+      setIsSubmitting(true);
+      try {
+          if (dbView === 'patients') {
+              await dataService.updatePatient(editingItem.id, {
+                  full_name: editingItem.full_name,
+                  phone_number: editingItem.phone_number,
+                  national_id: editingItem.national_id
+              });
+          } else if (dbView === 'hcps') {
+              await dataService.updateHCP(editingItem.id, {
+                  full_name: editingItem.full_name,
+                  hospital: editingItem.hospital,
+                  specialty: editingItem.specialty
+              });
+          } else if (dbView === 'locations') {
+              await dataService.updateCustody(editingItem.id, {
+                  name: editingItem.name
+              });
+          } else if (dbView === 'deliveries') {
+              await dataService.updateDelivery(editingItem.id, {
+                  quantity: editingItem.quantity,
+                  delivery_date: editingItem.delivery_date
+              });
+          } else if (dbView === 'stock') {
+              await dataService.updateStockTransaction(editingItem.id, {
+                 quantity: editingItem.quantity,
+                 transaction_date: editingItem.transaction_date,
+                 source: editingItem.source
+              });
+          }
+          showToast("Record updated", "success");
+          setShowEditModal(false);
+          setEditingItem(null);
+          await loadData();
+      } catch (e: any) {
+          showToast("Update failed: " + e.message, "error");
       } finally {
           setIsSubmitting(false);
       }
@@ -633,6 +709,61 @@ export const App: React.FC = () => {
             user={user}
             onLogout={handleLogout}
         />
+        
+        {/* Generic Edit Modal */}
+        {showEditModal && editingItem && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full overflow-hidden">
+                    <div className="bg-black text-white p-4 font-bold flex justify-between">
+                        <span>Edit Record</span>
+                        <button onClick={() => setShowEditModal(false)}><X className="w-5 h-5"/></button>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        {dbView === 'patients' && (
+                            <>
+                                <input className="w-full border p-2 rounded" placeholder="Name" value={editingItem.full_name} onChange={e=>setEditingItem({...editingItem, full_name: e.target.value})} />
+                                <input className="w-full border p-2 rounded" placeholder="National ID" value={editingItem.national_id} onChange={e=>setEditingItem({...editingItem, national_id: e.target.value})} />
+                                <input className="w-full border p-2 rounded" placeholder="Phone" value={editingItem.phone_number} onChange={e=>setEditingItem({...editingItem, phone_number: e.target.value})} />
+                            </>
+                        )}
+                        {dbView === 'hcps' && (
+                            <>
+                                <input className="w-full border p-2 rounded" placeholder="Dr Name" value={editingItem.full_name} onChange={e=>setEditingItem({...editingItem, full_name: e.target.value})} />
+                                <input className="w-full border p-2 rounded" placeholder="Hospital" value={editingItem.hospital} onChange={e=>setEditingItem({...editingItem, hospital: e.target.value})} />
+                                <input className="w-full border p-2 rounded" placeholder="Specialty" value={editingItem.specialty} onChange={e=>setEditingItem({...editingItem, specialty: e.target.value})} />
+                            </>
+                        )}
+                        {dbView === 'locations' && (
+                             <input className="w-full border p-2 rounded" placeholder="Location Name" value={editingItem.name} onChange={e=>setEditingItem({...editingItem, name: e.target.value})} />
+                        )}
+                        {dbView === 'deliveries' && (
+                            <>
+                                <label className="text-xs font-bold uppercase">Quantity</label>
+                                <input type="number" className="w-full border p-2 rounded" value={editingItem.quantity} onChange={e=>setEditingItem({...editingItem, quantity: Number(e.target.value)})} />
+                                <label className="text-xs font-bold uppercase">Date</label>
+                                <input type="date" className="w-full border p-2 rounded" value={editingItem.delivery_date} onChange={e=>setEditingItem({...editingItem, delivery_date: e.target.value})} />
+                            </>
+                        )}
+                        {dbView === 'stock' && (
+                            <>
+                                <label className="text-xs font-bold uppercase">Quantity (Negative for outgoing)</label>
+                                <input type="number" className="w-full border p-2 rounded" value={editingItem.quantity} onChange={e=>setEditingItem({...editingItem, quantity: Number(e.target.value)})} />
+                                <label className="text-xs font-bold uppercase">Source/Note</label>
+                                <input className="w-full border p-2 rounded" value={editingItem.source} onChange={e=>setEditingItem({...editingItem, source: e.target.value})} />
+                            </>
+                        )}
+                        
+                        <button 
+                            onClick={handleSaveEdit} 
+                            disabled={isSubmitting}
+                            className="w-full bg-[#FFC600] text-black font-bold py-3 uppercase tracking-wider hover:bg-yellow-400"
+                        >
+                            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Save Changes'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
 
         {!user ? (
             <div className="flex-1 overflow-y-auto">
@@ -765,7 +896,7 @@ export const App: React.FC = () => {
                                                 <div className="flex justify-between items-start mb-4">
                                                     <div>
                                                         <p className="text-xs font-bold text-slate-400 uppercase">
-                                                            {(userProfile.role === 'dm' || userProfile.role === 'lm') ? 'Team Total Stock' : 'My Stock'}
+                                                            {(userProfile.role === 'dm' || userProfile.role === 'lm') ? 'Network Stock' : 'My Stock'}
                                                         </p>
                                                         <h3 className="text-2xl font-black text-slate-900 mt-1">
                                                             {(userProfile.role === 'dm' || userProfile.role === 'lm') 
@@ -878,7 +1009,7 @@ export const App: React.FC = () => {
                                     />
                                 )}
 
-                                {/* DELIVER TAB - Re-implemented */}
+                                {/* DELIVER TAB */}
                                 {activeTab === 'deliver' && (userProfile?.role === 'mr' || userProfile?.role === 'admin') && (
                                     <div className="max-w-2xl mx-auto animate-in fade-in">
                                          {/* Step 1: Search */}
@@ -1071,7 +1202,7 @@ export const App: React.FC = () => {
                                     </div>
                                 )}
                                 
-                                {/* CUSTODY TAB - Re-implemented with Role Based View */}
+                                {/* CUSTODY TAB */}
                                 {activeTab === 'custody' && (
                                     <div className="space-y-6 animate-in fade-in">
                                          {/* Header */}
@@ -1104,15 +1235,15 @@ export const App: React.FC = () => {
                                          
                                          {/* 1. MR & ADMIN VIEW: Interactive */}
                                          {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                                  {/* Receive Form */}
                                                  <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
-                                                         Receive Stock
+                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
+                                                         <Plus className="w-4 h-4"/> Receive Stock
                                                      </h3>
                                                      <form onSubmit={handleReceiveStock} className="space-y-4">
                                                          <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">Quantity Received</label>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Quantity In</label>
                                                              <input 
                                                                  type="number" 
                                                                  min="1"
@@ -1123,7 +1254,7 @@ export const App: React.FC = () => {
                                                              />
                                                          </div>
                                                          <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">Educator Name (Source)</label>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">From Educator</label>
                                                              <input 
                                                                  type="text" 
                                                                  list="educators"
@@ -1137,16 +1268,6 @@ export const App: React.FC = () => {
                                                                  {educatorSuggestions.map(s => <option key={s} value={s} />)}
                                                              </datalist>
                                                          </div>
-                                                         <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">Date</label>
-                                                             <input 
-                                                                 type="date" 
-                                                                 required
-                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                                 value={receiveForm.date}
-                                                                 onChange={e => setReceiveForm({...receiveForm, date: e.target.value})}
-                                                             />
-                                                         </div>
                                                          <button 
                                                              type="submit"
                                                              disabled={isSubmitting}
@@ -1157,8 +1278,50 @@ export const App: React.FC = () => {
                                                      </form>
                                                  </div>
 
+                                                 {/* Transfer Form - NEW */}
+                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
+                                                         <Truck className="w-4 h-4"/> Transfer Stock
+                                                     </h3>
+                                                     <form onSubmit={handleTransferStock} className="space-y-4">
+                                                         <div>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Quantity Out</label>
+                                                             <input 
+                                                                 type="number" 
+                                                                 min="1"
+                                                                 max={myStockLevel}
+                                                                 required
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={transferForm.quantity}
+                                                                 onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
+                                                             />
+                                                         </div>
+                                                         <div>
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">To Location</label>
+                                                             <select 
+                                                                 required
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={transferForm.targetCustodyId}
+                                                                 onChange={e => setTransferForm({...transferForm, targetCustodyId: e.target.value})}
+                                                             >
+                                                                 <option value="">-- Select Destination --</option>
+                                                                 {custodies.filter(c => c.type !== 'rep').map(c => (
+                                                                     <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                                                                 ))}
+                                                             </select>
+                                                         </div>
+                                                         <button 
+                                                             type="submit"
+                                                             disabled={isSubmitting || myStockLevel < 1}
+                                                             className="w-full bg-slate-200 text-slate-800 hover:bg-slate-300 font-bold py-3 rounded transition-colors uppercase text-sm tracking-wide"
+                                                         >
+                                                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Transfer'}
+                                                         </button>
+                                                     </form>
+                                                 </div>
+
                                                  {/* Recent Transactions */}
-                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col">
+                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col lg:col-span-1 md:col-span-2">
                                                      <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
                                                          Stock History
                                                      </h3>
@@ -1184,21 +1347,21 @@ export const App: React.FC = () => {
                                             </div>
                                          )}
 
-                                         {/* 2. DM & LM VIEW: Read Only Summary */}
+                                         {/* 2. DM & LM VIEW: Detailed Table */}
                                          {(userProfile.role === 'dm' || userProfile.role === 'lm') && (
                                             <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
                                                 <div className="p-4 bg-slate-50 border-b border-slate-200">
                                                     <h3 className="font-bold text-slate-900 uppercase text-sm">
-                                                        {userProfile.role === 'dm' ? 'District Team Stock' : 'Regional Stock Overview'}
+                                                        {userProfile.role === 'dm' ? 'District Team Breakdown' : 'Regional Network Breakdown'}
                                                     </h3>
                                                 </div>
                                                 <div className="overflow-x-auto">
                                                     <table className="w-full text-left text-sm">
                                                         <thead className="bg-slate-100 text-slate-500 uppercase text-xs font-bold border-b border-slate-200">
                                                             <tr>
-                                                                <th className="px-6 py-3">Team Member</th>
+                                                                <th className="px-6 py-3">Medical Rep</th>
+                                                                <th className="px-6 py-3">Reporting To (DM)</th>
                                                                 <th className="px-6 py-3">Role</th>
-                                                                {userProfile.role === 'lm' && <th className="px-6 py-3">Team Size</th>}
                                                                 <th className="px-6 py-3 text-right">Current Stock</th>
                                                             </tr>
                                                         </thead>
@@ -1206,10 +1369,8 @@ export const App: React.FC = () => {
                                                             {managerStockData.map(item => (
                                                                 <tr key={item.id} className="hover:bg-slate-50">
                                                                     <td className="px-6 py-4 font-bold text-slate-900">{item.name}</td>
+                                                                    <td className="px-6 py-4 text-slate-600">{item.manager_name}</td>
                                                                     <td className="px-6 py-4 text-slate-500 text-xs uppercase">{item.role}</td>
-                                                                    {userProfile.role === 'lm' && (
-                                                                        <td className="px-6 py-4 text-slate-500">{item.subordinates} MRs</td>
-                                                                    )}
                                                                     <td className="px-6 py-4 text-right font-mono font-bold">
                                                                         {item.stock} <span className="text-xs text-slate-400 font-sans">pens</span>
                                                                     </td>
@@ -1230,18 +1391,18 @@ export const App: React.FC = () => {
                                     </div>
                                 )}
 
-                                {/* DATABASE TAB - Re-implemented */}
+                                {/* DATABASE TAB */}
                                 {activeTab === 'database' && (
                                     <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
                                          <div className="bg-slate-50 p-4 border-b border-slate-200 flex flex-wrap gap-4 items-center justify-between">
                                              <div className="flex gap-2">
-                                                 {(['deliveries', 'patients', 'hcps'] as DBView[]).map(view => (
+                                                 {(['deliveries', 'patients', 'hcps', 'locations', 'stock'] as DBView[]).map(view => (
                                                      <button
                                                          key={view}
                                                          onClick={() => setDbView(view)}
                                                          className={`px-4 py-2 text-xs font-bold uppercase rounded-full border transition-colors ${dbView === view ? 'bg-black text-white border-black' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
                                                      >
-                                                         {view}
+                                                         {view === 'stock' ? 'Transactions' : view.charAt(0).toUpperCase() + view.slice(1)}
                                                      </button>
                                                  ))}
                                              </div>
@@ -1269,6 +1430,9 @@ export const App: React.FC = () => {
                                                                  <th className="px-6 py-3">Product</th>
                                                                  <th className="px-6 py-3">Qty</th>
                                                                  <th className="px-6 py-3">Prescriber</th>
+                                                                 {/* Hierarchical Columns */}
+                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Medical Rep</th>}
+                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
                                                              </>
                                                          )}
                                                          {dbView === 'patients' && (
@@ -1276,6 +1440,7 @@ export const App: React.FC = () => {
                                                                  <th className="px-6 py-3">Name</th>
                                                                  <th className="px-6 py-3">National ID</th>
                                                                  <th className="px-6 py-3">Phone</th>
+                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Created By</th>}
                                                              </>
                                                          )}
                                                          {dbView === 'hcps' && (
@@ -1283,8 +1448,28 @@ export const App: React.FC = () => {
                                                                  <th className="px-6 py-3">Doctor Name</th>
                                                                  <th className="px-6 py-3">Hospital</th>
                                                                  <th className="px-6 py-3">Specialty</th>
+                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Created By</th>}
                                                              </>
                                                          )}
+                                                         {dbView === 'locations' && (
+                                                             <>
+                                                                 <th className="px-6 py-3">Name</th>
+                                                                 <th className="px-6 py-3">Type</th>
+                                                                 <th className="px-6 py-3 text-right">Stock</th>
+                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Owner/Rep</th>}
+                                                             </>
+                                                         )}
+                                                         {dbView === 'stock' && (
+                                                             <>
+                                                                 <th className="px-6 py-3">Date</th>
+                                                                 <th className="px-6 py-3">Source/Desc</th>
+                                                                 <th className="px-6 py-3 text-right">Qty</th>
+                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Location Owner</th>}
+                                                             </>
+                                                         )}
+                                                         
+                                                         {/* Action Column for MRs only */}
+                                                         {(userProfile.role === 'mr' || userProfile.role === 'admin') && <th className="px-6 py-3 text-right">Actions</th>}
                                                      </tr>
                                                  </thead>
                                                  <tbody className="divide-y divide-slate-100">
@@ -1293,35 +1478,121 @@ export const App: React.FC = () => {
                                                              (d.patient?.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
                                                              (d.hcp?.full_name || '').toLowerCase().includes(searchTerm.toLowerCase())
                                                          )
-                                                         .map(d => (
-                                                             <tr key={d.id} className="hover:bg-slate-50">
-                                                                 <td className="px-6 py-3 font-mono text-xs">{formatDateFriendly(d.delivery_date)}</td>
-                                                                 <td className="px-6 py-3 font-bold">{d.patient?.full_name}</td>
-                                                                 <td className="px-6 py-3">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
-                                                                 <td className="px-6 py-3 font-bold">{d.quantity}</td>
-                                                                 <td className="px-6 py-3 text-slate-500">{d.hcp?.full_name}</td>
-                                                             </tr>
-                                                         ))
+                                                         .map(d => {
+                                                             const ctx = getUserContext(d.delivered_by);
+                                                             return (
+                                                                 <tr key={d.id} className="hover:bg-slate-50">
+                                                                     <td className="px-6 py-3 font-mono text-xs">{formatDateFriendly(d.delivery_date)}</td>
+                                                                     <td className="px-6 py-3 font-bold">{d.patient?.full_name}</td>
+                                                                     <td className="px-6 py-3">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
+                                                                     <td className="px-6 py-3 font-bold">{d.quantity}</td>
+                                                                     <td className="px-6 py-3 text-slate-500">{d.hcp?.full_name}</td>
+                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-blue-600 font-medium text-xs">{ctx.mr}</td>}
+                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-purple-600 font-medium text-xs">{ctx.dm}</td>}
+                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
+                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
+                                                                            <button onClick={() => openEditModal(d, 'deliveries')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
+                                                                            <button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                        </td>
+                                                                     )}
+                                                                 </tr>
+                                                             );
+                                                         })
                                                      }
                                                      {dbView === 'patients' && patients
                                                          .filter(p => p.full_name.toLowerCase().includes(searchTerm.toLowerCase()))
-                                                         .map(p => (
-                                                             <tr key={p.id} className="hover:bg-slate-50">
-                                                                 <td className="px-6 py-3 font-bold">{p.full_name}</td>
-                                                                 <td className="px-6 py-3 font-mono text-slate-500">{p.national_id}</td>
-                                                                 <td className="px-6 py-3 text-slate-500">{p.phone_number}</td>
-                                                             </tr>
-                                                         ))
+                                                         .map(p => {
+                                                             const ctx = getUserContext(p.created_by || '');
+                                                             return (
+                                                                 <tr key={p.id} className="hover:bg-slate-50">
+                                                                     <td className="px-6 py-3 font-bold">{p.full_name}</td>
+                                                                     <td className="px-6 py-3 font-mono text-slate-500">{p.national_id}</td>
+                                                                     <td className="px-6 py-3 text-slate-500">{p.phone_number}</td>
+                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{ctx.mr}</td>}
+                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
+                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
+                                                                            <button onClick={() => openEditModal(p, 'patients')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
+                                                                            <button onClick={() => handleDeleteItem('patients', p.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                        </td>
+                                                                     )}
+                                                                 </tr>
+                                                             );
+                                                         })
                                                      }
                                                      {dbView === 'hcps' && hcps
                                                          .filter(h => h.full_name.toLowerCase().includes(searchTerm.toLowerCase()))
-                                                         .map(h => (
-                                                             <tr key={h.id} className="hover:bg-slate-50">
-                                                                 <td className="px-6 py-3 font-bold">{h.full_name}</td>
-                                                                 <td className="px-6 py-3">{h.hospital}</td>
-                                                                 <td className="px-6 py-3 text-slate-500">{h.specialty}</td>
-                                                             </tr>
-                                                         ))
+                                                         .map(h => {
+                                                             const ctx = getUserContext(h.created_by || '');
+                                                             return (
+                                                                 <tr key={h.id} className="hover:bg-slate-50">
+                                                                     <td className="px-6 py-3 font-bold">{h.full_name}</td>
+                                                                     <td className="px-6 py-3">{h.hospital}</td>
+                                                                     <td className="px-6 py-3 text-slate-500">{h.specialty}</td>
+                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{ctx.mr}</td>}
+                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
+                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
+                                                                            <button onClick={() => openEditModal(h, 'hcps')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
+                                                                            <button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                        </td>
+                                                                     )}
+                                                                 </tr>
+                                                             );
+                                                         })
+                                                     }
+                                                     {dbView === 'locations' && custodies
+                                                         .filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                                                         .map(c => {
+                                                             const ctx = getUserContext(c.owner_id || '');
+                                                             return (
+                                                                 <tr key={c.id} className="hover:bg-slate-50">
+                                                                     <td className="px-6 py-3 font-bold">{c.name}</td>
+                                                                     <td className="px-6 py-3 uppercase text-xs font-bold text-slate-500">{c.type}</td>
+                                                                     <td className="px-6 py-3 text-right font-mono">{c.current_stock}</td>
+                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{c.owner_id ? ctx.mr : '-'}</td>}
+                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
+                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
+                                                                            <button onClick={() => openEditModal(c, 'locations')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
+                                                                            <button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                        </td>
+                                                                     )}
+                                                                 </tr>
+                                                             );
+                                                         })
+                                                     }
+                                                     {dbView === 'stock' && stockTransactions
+                                                         .filter(t => t.source.toLowerCase().includes(searchTerm.toLowerCase()))
+                                                         .map(t => {
+                                                             // Find owner of the custody for this transaction
+                                                             const c = custodies.find(c => c.id === t.custody_id);
+                                                             const ctx = getUserContext(c?.owner_id || '');
+                                                             
+                                                             // Filter visibility based on role for Transactions
+                                                             let visible = true;
+                                                             if (userProfile.role === 'mr' && c?.owner_id !== user.id) visible = false;
+                                                             if (userProfile.role === 'dm') {
+                                                                 const isMyRep = allProfiles.find(p => p.id === c?.owner_id)?.manager_id === user.id;
+                                                                 if (!isMyRep && c?.owner_id !== user.id) visible = false;
+                                                             }
+
+                                                             if (!visible && userProfile.role !== 'admin' && userProfile.role !== 'lm') return null;
+
+                                                             return (
+                                                                 <tr key={t.id} className="hover:bg-slate-50">
+                                                                     <td className="px-6 py-3 font-mono text-xs">{formatDateFriendly(t.transaction_date)}</td>
+                                                                     <td className="px-6 py-3">{t.source}</td>
+                                                                     <td className={`px-6 py-3 text-right font-bold ${t.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                         {t.quantity > 0 ? '+' : ''}{t.quantity}
+                                                                     </td>
+                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{c?.owner_id ? ctx.mr : '-'}</td>}
+                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
+                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
+                                                                            <button onClick={() => openEditModal(t, 'stock')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
+                                                                            <button onClick={() => handleDeleteItem('stock', t.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                        </td>
+                                                                     )}
+                                                                 </tr>
+                                                             );
+                                                         })
                                                      }
                                                  </tbody>
                                              </table>
