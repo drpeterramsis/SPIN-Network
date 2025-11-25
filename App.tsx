@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Auth } from './components/Auth';
 import { AdminPanel } from './components/AdminPanel';
@@ -44,8 +42,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.049",
-  version: "2.0.049"
+  name: "S.P.I.N v2.0.050",
+  version: "2.0.050"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -707,7 +705,8 @@ export const App: React.FC = () => {
                   hcp_id: editingItem.hcp_id,
                   rx_date: editingItem.rx_date,
                   educator_name: editingItem.educator_name,
-                  educator_submission_date: editingItem.educator_submission_date
+                  educator_submission_date: editingItem.educator_submission_date,
+                  custody_id: editingItem.custody_id
               });
           } else if (dbView === 'stock') {
               await dataService.updateStockTransaction(editingItem.id, {
@@ -798,6 +797,13 @@ export const App: React.FC = () => {
                                         <label className="text-[10px] font-bold uppercase text-slate-500">Delivery Date</label>
                                         <input type="date" className="w-full border p-2 rounded" value={editingItem.delivery_date} onChange={e=>setEditingItem({...editingItem, delivery_date: e.target.value})} />
                                     </div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-slate-500">Location Received From</label>
+                                    <select className="w-full border p-2 rounded bg-white" value={editingItem.custody_id || ''} onChange={e=>setEditingItem({...editingItem, custody_id: e.target.value})}>
+                                        <option value="">-- Select --</option>
+                                        {custodies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-bold uppercase text-slate-500">Product</label>
@@ -1299,6 +1305,23 @@ export const App: React.FC = () => {
                                                          </div>
 
                                                          <div className="space-y-2">
+                                                            <label className="text-xs font-bold text-slate-500 uppercase">Location Received From</label>
+                                                            <select
+                                                                required
+                                                                className="w-full px-4 py-3 border border-slate-300 bg-slate-50 rounded outline-none focus:border-[#FFC600]"
+                                                                value={selectedCustody}
+                                                                onChange={e => setSelectedCustody(e.target.value)}
+                                                            >
+                                                                <option value="">-- Select Inventory Source --</option>
+                                                                {custodies.map(c => (
+                                                                    <option key={c.id} value={c.id}>
+                                                                        {c.name} (Stock: {c.current_stock})
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+
+                                                         <div className="space-y-2">
                                                              <label className="text-xs font-bold text-slate-500 uppercase">Product</label>
                                                              <select 
                                                                  required
@@ -1448,194 +1471,101 @@ export const App: React.FC = () => {
                                                         : myStockLevel
                                                      }
                                                  </span>
-                                                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Pens</span>
+                                                 <span className="text-[10px] font-bold uppercase text-slate-400">Total Pens</span>
                                              </div>
                                          </div>
 
-                                         {/* ROLE BASED CONTENT */}
-                                         
-                                         {/* 1. MR & ADMIN VIEW: Interactive */}
-                                         {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                                 {/* Receive Form */}
-                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
-                                                         <Plus className="w-4 h-4"/> Receive Stock
-                                                     </h3>
-                                                     <form onSubmit={handleReceiveStock} className="space-y-4">
-                                                         <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">Quantity In</label>
-                                                             <input 
-                                                                 type="number" 
-                                                                 min="1"
-                                                                 required
-                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                                 value={receiveForm.quantity}
-                                                                 onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
-                                                             />
-                                                         </div>
-                                                         <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">Date Received</label>
-                                                             <input 
-                                                                 type="date"
-                                                                 required
-                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                                 value={receiveForm.date}
-                                                                 onChange={e => setReceiveForm({...receiveForm, date: e.target.value})}
-                                                             />
-                                                         </div>
-                                                         <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">From Educator</label>
-                                                             <input 
-                                                                 type="text" 
-                                                                 list="educators"
-                                                                 required
-                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                                 value={receiveForm.educatorName}
-                                                                 onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
-                                                                 placeholder="e.g. Nurse Joy"
-                                                             />
-                                                             <datalist id="educators">
-                                                                 {educatorSuggestions.map(s => <option key={s} value={s} />)}
-                                                             </datalist>
-                                                         </div>
-                                                         <button 
-                                                             type="submit"
-                                                             disabled={isSubmitting}
-                                                             className="w-full bg-black text-white font-bold py-3 rounded hover:bg-slate-800 transition-colors uppercase text-sm tracking-wide"
-                                                         >
-                                                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Log Receipt'}
-                                                         </button>
-                                                     </form>
-                                                 </div>
-
-                                                 {/* Transfer Form - NEW */}
-                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
-                                                         <Truck className="w-4 h-4"/> Transfer Stock
-                                                     </h3>
-                                                     <form onSubmit={handleTransferStock} className="space-y-4">
-                                                         <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">Quantity Out</label>
-                                                             <input 
-                                                                 type="number" 
-                                                                 min="1"
-                                                                 max={myStockLevel}
-                                                                 required
-                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                                 value={transferForm.quantity}
-                                                                 onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})}
-                                                             />
-                                                         </div>
-                                                         <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">Transfer Date</label>
-                                                             <input 
-                                                                 type="date"
-                                                                 required
-                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                                 value={transferForm.date}
-                                                                 onChange={e => setTransferForm({...transferForm, date: e.target.value})}
-                                                             />
-                                                         </div>
-                                                         <div>
-                                                             <label className="text-xs font-bold text-slate-500 uppercase">To Location</label>
-                                                             <div className="flex gap-1">
-                                                                <select 
-                                                                    required
-                                                                    className="flex-1 px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600] w-full"
-                                                                    value={transferForm.targetCustodyId}
-                                                                    onChange={e => setTransferForm({...transferForm, targetCustodyId: e.target.value})}
-                                                                >
-                                                                    <option value="">-- Select Destination --</option>
-                                                                    {custodies.filter(c => c.type !== 'rep').map(c => (
-                                                                        <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
-                                                                    ))}
-                                                                </select>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => setShowLocationModal(true)}
-                                                                    className="bg-slate-200 hover:bg-slate-300 text-slate-600 px-3 rounded flex items-center justify-center"
-                                                                    title="Create New Location"
-                                                                >
-                                                                    <Plus className="w-4 h-4" />
-                                                                </button>
-                                                             </div>
-                                                         </div>
-                                                         <button 
-                                                             type="submit"
-                                                             disabled={isSubmitting || myStockLevel < 1}
-                                                             className="w-full bg-slate-200 text-slate-800 hover:bg-slate-300 font-bold py-3 rounded transition-colors uppercase text-sm tracking-wide"
-                                                         >
-                                                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Transfer'}
-                                                         </button>
-                                                     </form>
-                                                 </div>
-
-                                                 {/* Recent Transactions */}
-                                                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col lg:col-span-1 md:col-span-2">
-                                                     <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
-                                                         Stock History
-                                                     </h3>
-                                                     <div className="flex-1 overflow-y-auto max-h-[300px] space-y-3">
-                                                         {stockTransactions.filter(t => t.custody_id === repCustody?.id).map(tx => (
-                                                             <div key={tx.id} className="flex justify-between items-center text-sm p-3 bg-slate-50 rounded border border-slate-100">
-                                                                 <div>
-                                                                     <span className={`font-bold ${tx.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                         {tx.quantity > 0 ? '+' : ''}{tx.quantity}
-                                                                     </span>
-                                                                     <span className="text-slate-500 ml-2">{formatDateFriendly(tx.transaction_date)}</span>
-                                                                 </div>
-                                                                 <div className="text-xs text-slate-400 max-w-[150px] truncate" title={tx.source}>
-                                                                     {tx.source}
-                                                                 </div>
-                                                             </div>
+                                         {/* Manager View */}
+                                         {(userProfile.role === 'dm' || userProfile.role === 'lm') && (
+                                             <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                                                 <table className="w-full text-left">
+                                                     <thead className="bg-slate-100 border-b border-slate-200 text-[10px] font-bold uppercase text-slate-500">
+                                                         <tr>
+                                                             <th className="px-6 py-4">Employee</th>
+                                                             <th className="px-6 py-4">Role</th>
+                                                             <th className="px-6 py-4">Manager</th>
+                                                             <th className="px-6 py-4 text-right">Current Stock</th>
+                                                         </tr>
+                                                     </thead>
+                                                     <tbody className="divide-y divide-slate-100">
+                                                         {managerStockData.map(m => (
+                                                             <tr key={m.id} className="hover:bg-slate-50">
+                                                                 <td className="px-6 py-4 font-bold text-slate-900">{m.name}</td>
+                                                                 <td className="px-6 py-4 text-xs text-slate-500">{m.role}</td>
+                                                                 <td className="px-6 py-4 text-xs text-slate-500">{m.manager_name}</td>
+                                                                 <td className="px-6 py-4 text-right font-bold text-slate-900">{m.stock}</td>
+                                                             </tr>
                                                          ))}
-                                                         {stockTransactions.filter(t => t.custody_id === repCustody?.id).length === 0 && (
-                                                             <p className="text-center text-slate-400 py-4 text-xs">No transactions found.</p>
+                                                         {managerStockData.length === 0 && (
+                                                             <tr><td colSpan={4} className="px-6 py-8 text-center text-slate-400 text-xs uppercase">No active team members found.</td></tr>
                                                          )}
-                                                     </div>
-                                                 </div>
-                                            </div>
+                                                     </tbody>
+                                                 </table>
+                                             </div>
                                          )}
 
-                                         {/* 2. DM & LM VIEW: Detailed Table */}
-                                         {(userProfile.role === 'dm' || userProfile.role === 'lm') && (
-                                            <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                                                <div className="p-4 bg-slate-50 border-b border-slate-200">
-                                                    <h3 className="font-bold text-slate-900 uppercase text-sm">
-                                                        {userProfile.role === 'dm' ? 'District Team Breakdown' : 'Regional Network Breakdown'}
+                                         {/* MR View Actions */}
+                                         {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                {/* Receive Stock */}
+                                                <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                                                    <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                                        <Truck className="w-4 h-4 text-[#FFC600]" /> Receive Stock
                                                     </h3>
+                                                    <form onSubmit={handleReceiveStock} className="space-y-4">
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase">Quantity Received</label>
+                                                            <input type="number" min="1" className="w-full border p-2 rounded bg-slate-50" value={receiveForm.quantity} onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase">From Educator</label>
+                                                            <input type="text" list="educators_recv" className="w-full border p-2 rounded bg-slate-50" value={receiveForm.educatorName} onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})} placeholder="e.g. Nurse Joy" />
+                                                            <datalist id="educators_recv">
+                                                                {educatorSuggestions.map(s => <option key={s} value={s} />)}
+                                                            </datalist>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase">Date</label>
+                                                            <input type="date" className="w-full border p-2 rounded bg-slate-50" value={receiveForm.date} onChange={e => setReceiveForm({...receiveForm, date: e.target.value})} />
+                                                        </div>
+                                                        <button disabled={isSubmitting} className="w-full bg-slate-900 text-white font-bold py-2 rounded text-xs uppercase tracking-wider hover:bg-black">
+                                                            {isSubmitting ? '...' : 'Add to Inventory'}
+                                                        </button>
+                                                    </form>
                                                 </div>
-                                                <div className="overflow-x-auto">
-                                                    <table className="w-full text-left text-sm">
-                                                        <thead className="bg-slate-100 text-slate-500 uppercase text-xs font-bold border-b border-slate-200">
-                                                            <tr>
-                                                                <th className="px-6 py-3">Medical Rep</th>
-                                                                <th className="px-6 py-3">Reporting To (DM)</th>
-                                                                <th className="px-6 py-3">Role</th>
-                                                                <th className="px-6 py-3 text-right">Current Stock</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-slate-100">
-                                                            {managerStockData.map(item => (
-                                                                <tr key={item.id} className="hover:bg-slate-50">
-                                                                    <td className="px-6 py-4 font-bold text-slate-900">{item.name}</td>
-                                                                    <td className="px-6 py-4 text-slate-600">{item.manager_name}</td>
-                                                                    <td className="px-6 py-4 text-slate-500 text-xs uppercase">{item.role}</td>
-                                                                    <td className="px-6 py-4 text-right font-mono font-bold">
-                                                                        {item.stock} <span className="text-xs text-slate-400 font-sans">pens</span>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                            {managerStockData.length === 0 && (
-                                                                <tr>
-                                                                    <td colSpan={4} className="p-8 text-center text-slate-400">
-                                                                        No team members assigned or no stock data available.
-                                                                    </td>
-                                                                </tr>
-                                                            )}
-                                                        </tbody>
-                                                    </table>
+
+                                                {/* Transfer Stock */}
+                                                <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                                                    <div className="flex justify-between items-center mb-4">
+                                                        <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                                            <ArrowRight className="w-4 h-4 text-[#FFC600]" /> Transfer Out
+                                                        </h3>
+                                                        <button onClick={() => setShowLocationModal(true)} className="text-[10px] bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded font-bold uppercase flex items-center gap-1">
+                                                            <Plus className="w-3 h-3"/> New Loc
+                                                        </button>
+                                                    </div>
+                                                    <form onSubmit={handleTransferStock} className="space-y-4">
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase">Destination</label>
+                                                            <select className="w-full border p-2 rounded bg-slate-50" value={transferForm.targetCustodyId} onChange={e => setTransferForm({...transferForm, targetCustodyId: e.target.value})}>
+                                                                <option value="">-- Select Clinic/Pharmacy --</option>
+                                                                {custodies.filter(c => c.type !== 'rep').map(c => (
+                                                                    <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase">Quantity</label>
+                                                            <input type="number" min="1" max={myStockLevel} className="w-full border p-2 rounded bg-slate-50" value={transferForm.quantity} onChange={e => setTransferForm({...transferForm, quantity: Number(e.target.value)})} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 uppercase">Date</label>
+                                                            <input type="date" className="w-full border p-2 rounded bg-slate-50" value={transferForm.date} onChange={e => setTransferForm({...transferForm, date: e.target.value})} />
+                                                        </div>
+                                                        <button disabled={isSubmitting || myStockLevel < 1} className="w-full bg-[#FFC600] text-black font-bold py-2 rounded text-xs uppercase tracking-wider hover:bg-yellow-400 disabled:opacity-50">
+                                                            {isSubmitting ? '...' : 'Transfer Stock'}
+                                                        </button>
+                                                    </form>
                                                 </div>
                                             </div>
                                          )}
@@ -1645,245 +1575,143 @@ export const App: React.FC = () => {
                                 {/* DATABASE TAB */}
                                 {activeTab === 'database' && (
                                     <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
-                                         <div className="bg-slate-50 p-4 border-b border-slate-200 flex flex-wrap gap-4 items-center justify-between">
-                                             <div className="flex gap-2">
-                                                 {(['deliveries', 'patients', 'hcps', 'locations', 'stock'] as DBView[]).map(view => (
-                                                     <button
-                                                         key={view}
-                                                         onClick={() => setDbView(view)}
-                                                         className={`px-4 py-2 text-xs font-bold uppercase rounded-full border transition-colors ${dbView === view ? 'bg-black text-white border-black' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
-                                                     >
-                                                         {view === 'stock' ? 'Transactions' : view.charAt(0).toUpperCase() + view.slice(1)}
-                                                     </button>
-                                                 ))}
-                                             </div>
-                                             
-                                             <div className="relative">
-                                                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                                 <input 
-                                                     type="text" 
-                                                     placeholder="Search records..." 
-                                                     value={searchTerm}
-                                                     onChange={e => setSearchTerm(e.target.value)}
-                                                     className="pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-full outline-none focus:border-[#FFC600] w-64"
-                                                 />
-                                             </div>
-                                         </div>
+                                        <div className="bg-slate-50 border-b border-slate-200 p-2 overflow-x-auto flex gap-2">
+                                            {[
+                                                { id: 'deliveries', label: 'Deliveries' },
+                                                { id: 'hcps', label: 'Doctors' },
+                                                { id: 'patients', label: 'Patients' },
+                                                { id: 'locations', label: 'Locations' },
+                                                { id: 'stock', label: 'Stock Logs' }
+                                            ].map(view => (
+                                                <button
+                                                    key={view.id}
+                                                    onClick={() => setDbView(view.id as DBView)}
+                                                    className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === view.id ? 'bg-black text-white' : 'text-slate-500 hover:bg-slate-200'}`}
+                                                >
+                                                    {view.label}
+                                                </button>
+                                            ))}
+                                        </div>
 
-                                         <div className="overflow-x-auto">
-                                             <table className="w-full text-left text-sm">
-                                                 <thead className="bg-slate-100 text-slate-500 uppercase text-xs font-bold border-b border-slate-200">
-                                                     <tr>
-                                                         {dbView === 'deliveries' && (
-                                                             <>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Date</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Patient</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">National ID</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Phone</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Product</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Qty</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Prescriber</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Rx Date</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Educator</th>
-                                                                 <th className="px-6 py-3 whitespace-nowrap">Info Date</th>
-                                                                 {/* Hierarchical Columns */}
-                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Medical Rep</th>}
-                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
-                                                             </>
-                                                         )}
-                                                         {dbView === 'patients' && (
-                                                             <>
-                                                                 <th className="px-6 py-3">Name</th>
-                                                                 <th className="px-6 py-3">National ID</th>
-                                                                 <th className="px-6 py-3">Phone</th>
-                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Medical Rep</th>}
-                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
-                                                             </>
-                                                         )}
-                                                         {dbView === 'hcps' && (
-                                                             <>
-                                                                 <th className="px-6 py-3">Doctor Name</th>
-                                                                 <th className="px-6 py-3">Hospital</th>
-                                                                 <th className="px-6 py-3">Specialty</th>
-                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Medical Rep</th>}
-                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
-                                                             </>
-                                                         )}
-                                                         {dbView === 'locations' && (
-                                                             <>
-                                                                 <th className="px-6 py-3">Name</th>
-                                                                 <th className="px-6 py-3">Type</th>
-                                                                 <th className="px-6 py-3 text-right">Stock</th>
-                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Owner/Rep</th>}
-                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
-                                                             </>
-                                                         )}
-                                                         {dbView === 'stock' && (
-                                                             <>
-                                                                 <th className="px-6 py-3">Date</th>
-                                                                 <th className="px-6 py-3">Source/Desc</th>
-                                                                 <th className="px-6 py-3 text-right">Qty</th>
-                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Location Owner</th>}
-                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
-                                                             </>
-                                                         )}
-                                                         
-                                                         {/* Action Column for MRs only */}
-                                                         {(userProfile.role === 'mr' || userProfile.role === 'admin') && <th className="px-6 py-3 text-right">Actions</th>}
-                                                     </tr>
-                                                 </thead>
-                                                 <tbody className="divide-y divide-slate-100">
-                                                     {dbView === 'deliveries' && visibleDeliveries
-                                                         .filter(d => 
-                                                             (d.patient?.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
-                                                             (d.hcp?.full_name || '').toLowerCase().includes(searchTerm.toLowerCase())
-                                                         )
-                                                         .map(d => {
-                                                             const ctx = getUserContext(d.delivered_by);
-                                                             return (
-                                                                 <tr key={d.id} className="hover:bg-slate-50">
-                                                                     <td className="px-6 py-3 font-mono text-xs whitespace-nowrap">{formatDateFriendly(d.delivery_date)}</td>
-                                                                     <td className="px-6 py-3 font-bold whitespace-nowrap">{d.patient?.full_name}</td>
-                                                                     <td className="px-6 py-3 text-xs font-mono text-slate-500 whitespace-nowrap">{d.patient?.national_id}</td>
-                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.patient?.phone_number}</td>
-                                                                     <td className="px-6 py-3 whitespace-nowrap">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
-                                                                     <td className="px-6 py-3 font-bold whitespace-nowrap">{d.quantity}</td>
-                                                                     <td className="px-6 py-3 text-slate-500 whitespace-nowrap">{d.hcp?.full_name}</td>
-                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.rx_date ? formatDateFriendly(d.rx_date) : '-'}</td>
-                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.educator_name || '-'}</td>
-                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.educator_submission_date ? formatDateFriendly(d.educator_submission_date) : '-'}</td>
-                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-blue-600 font-medium text-xs">{ctx.mr}</td>}
-                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-purple-600 font-medium text-xs">{ctx.dm}</td>}
-                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
-                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
-                                                                            <button onClick={() => openEditModal(d, 'deliveries')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
-                                                                            <button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                                        </td>
-                                                                     )}
-                                                                 </tr>
-                                                             );
-                                                         })
-                                                     }
-                                                     {dbView === 'patients' && patients
-                                                         .filter(p => p.full_name.toLowerCase().includes(searchTerm.toLowerCase()))
-                                                         .map(p => {
-                                                             const ctx = getUserContext(p.created_by || '');
-                                                             return (
-                                                                 <tr key={p.id} className="hover:bg-slate-50">
-                                                                     <td className="px-6 py-3 font-bold">{p.full_name}</td>
-                                                                     <td className="px-6 py-3 font-mono text-slate-500">{p.national_id}</td>
-                                                                     <td className="px-6 py-3 text-slate-500">{p.phone_number}</td>
-                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{ctx.mr}</td>}
-                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{ctx.dm}</td>}
-                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
-                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
-                                                                            <button onClick={() => openEditModal(p, 'patients')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
-                                                                            <button onClick={() => handleDeleteItem('patients', p.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                                        </td>
-                                                                     )}
-                                                                 </tr>
-                                                             );
-                                                         })
-                                                     }
-                                                     {dbView === 'hcps' && hcps
-                                                         .filter(h => h.full_name.toLowerCase().includes(searchTerm.toLowerCase()))
-                                                         .map(h => {
-                                                             const ctx = getUserContext(h.created_by || '');
-                                                             return (
-                                                                 <tr key={h.id} className="hover:bg-slate-50">
-                                                                     <td className="px-6 py-3 font-bold">{h.full_name}</td>
-                                                                     <td className="px-6 py-3">{h.hospital}</td>
-                                                                     <td className="px-6 py-3 text-slate-500">{h.specialty}</td>
-                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{ctx.mr}</td>}
-                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{ctx.dm}</td>}
-                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
-                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
-                                                                            <button onClick={() => openEditModal(h, 'hcps')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
-                                                                            <button onClick={() => handleDeleteItem('hcps', h.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                                        </td>
-                                                                     )}
-                                                                 </tr>
-                                                             );
-                                                         })
-                                                     }
-                                                     {dbView === 'locations' && custodies
-                                                         .filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
-                                                         .map(c => {
-                                                             const ctx = getUserContext(c.owner_id || '');
-                                                             return (
-                                                                 <tr key={c.id} className="hover:bg-slate-50">
-                                                                     <td className="px-6 py-3 font-bold">{c.name}</td>
-                                                                     <td className="px-6 py-3 uppercase text-xs font-bold text-slate-500">{c.type}</td>
-                                                                     <td className="px-6 py-3 text-right font-mono">{c.current_stock}</td>
-                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{c.owner_id ? ctx.mr : '-'}</td>}
-                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{c.owner_id ? ctx.dm : '-'}</td>}
-                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
-                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
-                                                                            <button onClick={() => openEditModal(c, 'locations')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
-                                                                            <button onClick={() => handleDeleteItem('locations', c.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                                        </td>
-                                                                     )}
-                                                                 </tr>
-                                                             );
-                                                         })
-                                                     }
-                                                     {dbView === 'stock' && stockTransactions
-                                                         .filter(t => t.source.toLowerCase().includes(searchTerm.toLowerCase()))
-                                                         .map(t => {
-                                                             // Find owner of the custody for this transaction
-                                                             const c = custodies.find(c => c.id === t.custody_id);
-                                                             const ctx = getUserContext(c?.owner_id || '');
-                                                             
-                                                             // Filter visibility based on role for Transactions
-                                                             let visible = true;
-                                                             if (userProfile.role === 'mr' && c?.owner_id !== user.id) visible = false;
-                                                             if (userProfile.role === 'dm') {
-                                                                 const isMyRep = allProfiles.find(p => p.id === c?.owner_id)?.manager_id === user.id;
-                                                                 if (!isMyRep && c?.owner_id !== user.id) visible = false;
-                                                             }
-
-                                                             if (!visible && userProfile.role !== 'admin' && userProfile.role !== 'lm') return null;
-
-                                                             return (
-                                                                 <tr key={t.id} className="hover:bg-slate-50">
-                                                                     <td className="px-6 py-3 font-mono text-xs">{formatDateFriendly(t.transaction_date)}</td>
-                                                                     <td className="px-6 py-3">{t.source}</td>
-                                                                     <td className={`px-6 py-3 text-right font-bold ${t.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                         {t.quantity > 0 ? '+' : ''}{t.quantity}
-                                                                     </td>
-                                                                     {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{c?.owner_id ? ctx.mr : '-'}</td>}
-                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{c?.owner_id ? ctx.dm : '-'}</td>}
-                                                                     {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
-                                                                        <td className="px-6 py-3 text-right flex justify-end gap-2">
-                                                                            <button onClick={() => openEditModal(t, 'stock')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
-                                                                            <button onClick={() => handleDeleteItem('stock', t.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                                        </td>
-                                                                     )}
-                                                                 </tr>
-                                                             );
-                                                         })
-                                                     }
-                                                 </tbody>
-                                             </table>
-                                             {/* Empty States */}
-                                             {(
-                                                 (dbView === 'deliveries' && visibleDeliveries.length === 0) ||
-                                                 (dbView === 'patients' && patients.length === 0) ||
-                                                 (dbView === 'hcps' && hcps.length === 0)
-                                             ) && (
-                                                 <div className="p-12 text-center text-slate-400 text-sm">No records found.</div>
-                                             )}
-                                         </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left min-w-[800px]">
+                                                <thead className="bg-white border-b border-slate-200 text-[10px] font-bold uppercase text-slate-400">
+                                                    <tr>
+                                                        {dbView === 'deliveries' && (
+                                                            <>
+                                                                <th className="px-6 py-4">Date</th>
+                                                                <th className="px-6 py-4">Patient</th>
+                                                                <th className="px-6 py-4">HCP</th>
+                                                                <th className="px-6 py-4">Location</th>
+                                                                <th className="px-6 py-4">Qty</th>
+                                                                <th className="px-6 py-4">Product</th>
+                                                                <th className="px-6 py-4 text-right">Actions</th>
+                                                            </>
+                                                        )}
+                                                        {dbView === 'hcps' && (
+                                                            <>
+                                                                <th className="px-6 py-4">Name</th>
+                                                                <th className="px-6 py-4">Hospital</th>
+                                                                <th className="px-6 py-4">Specialty</th>
+                                                                <th className="px-6 py-4 text-right">Actions</th>
+                                                            </>
+                                                        )}
+                                                        {dbView === 'patients' && (
+                                                            <>
+                                                                <th className="px-6 py-4">Name</th>
+                                                                <th className="px-6 py-4">National ID</th>
+                                                                <th className="px-6 py-4">Phone</th>
+                                                                <th className="px-6 py-4 text-right">Actions</th>
+                                                            </>
+                                                        )}
+                                                        {dbView === 'locations' && (
+                                                            <>
+                                                                <th className="px-6 py-4">Name</th>
+                                                                <th className="px-6 py-4">Type</th>
+                                                                <th className="px-6 py-4 text-right">Stock</th>
+                                                                <th className="px-6 py-4 text-right">Actions</th>
+                                                            </>
+                                                        )}
+                                                        {dbView === 'stock' && (
+                                                            <>
+                                                                <th className="px-6 py-4">Date</th>
+                                                                <th className="px-6 py-4">Location</th>
+                                                                <th className="px-6 py-4">Change</th>
+                                                                <th className="px-6 py-4">Source/Note</th>
+                                                                <th className="px-6 py-4 text-right">Actions</th>
+                                                            </>
+                                                        )}
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100 text-sm">
+                                                    {dbView === 'deliveries' && visibleDeliveries.map(d => (
+                                                        <tr key={d.id} className="hover:bg-slate-50">
+                                                            <td className="px-6 py-4 text-slate-500 font-mono text-xs">{formatDateFriendly(d.delivery_date)}</td>
+                                                            <td className="px-6 py-4 font-bold">{d.patient?.full_name}</td>
+                                                            <td className="px-6 py-4">{d.hcp?.full_name}</td>
+                                                            <td className="px-6 py-4 text-slate-600">{d.custody?.name || 'Unknown'}</td>
+                                                            <td className="px-6 py-4 font-bold">{d.quantity}</td>
+                                                            <td className="px-6 py-4 text-xs uppercase">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
+                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                <button onClick={() => openEditModal(d, 'deliveries')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                <button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {dbView === 'hcps' && hcps.map(h => (
+                                                        <tr key={h.id} className="hover:bg-slate-50">
+                                                            <td className="px-6 py-4 font-bold">{h.full_name}</td>
+                                                            <td className="px-6 py-4">{h.hospital}</td>
+                                                            <td className="px-6 py-4 text-xs bg-slate-100 rounded inline-block px-2 py-1 my-3">{h.specialty}</td>
+                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                <button onClick={() => openEditModal(h, 'hcps')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                <button onClick={() => handleDeleteItem('hcps', h.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {dbView === 'patients' && patients.map(p => (
+                                                        <tr key={p.id} className="hover:bg-slate-50">
+                                                            <td className="px-6 py-4 font-bold">{p.full_name}</td>
+                                                            <td className="px-6 py-4 font-mono text-xs">{p.national_id}</td>
+                                                            <td className="px-6 py-4 text-slate-500">{p.phone_number}</td>
+                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                <button onClick={() => openEditModal(p, 'patients')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                <button onClick={() => handleDeleteItem('patients', p.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {dbView === 'locations' && custodies.map(c => (
+                                                        <tr key={c.id} className="hover:bg-slate-50">
+                                                            <td className="px-6 py-4 font-bold">{c.name}</td>
+                                                            <td className="px-6 py-4 text-xs uppercase text-slate-500">{c.type}</td>
+                                                            <td className="px-6 py-4 text-right font-mono font-bold">{c.current_stock}</td>
+                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                <button onClick={() => openEditModal(c, 'locations')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                <button onClick={() => handleDeleteItem('locations', c.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {dbView === 'stock' && stockTransactions.slice(0, 50).map(t => (
+                                                        <tr key={t.id} className="hover:bg-slate-50">
+                                                            <td className="px-6 py-4 font-mono text-xs text-slate-500">{formatDateFriendly(t.transaction_date)}</td>
+                                                            <td className="px-6 py-4 font-bold text-xs">{custodies.find(c=>c.id===t.custody_id)?.name}</td>
+                                                            <td className={`px-6 py-4 font-bold ${t.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{t.quantity > 0 ? '+' : ''}{t.quantity}</td>
+                                                            <td className="px-6 py-4 text-xs text-slate-600">{t.source}</td>
+                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                <button onClick={() => openEditModal(t, 'stock')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                <button onClick={() => handleDeleteItem('stock', t.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 )}
                             </>
                         )}
-                        
                     </div>
                 </div>
-                
-                {/* Footer placed outside scroll area */}
-                <Footer />
             </main>
           </>
         )}

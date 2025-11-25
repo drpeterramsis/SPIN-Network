@@ -1,5 +1,3 @@
-
-
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS, UserProfile } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -433,8 +431,22 @@ export const dataService = {
              if (p) patientName = p.full_name;
           }
       }
+
+      // Resolve Custody Name for nicer log
+      let custodyName = 'Unknown Location';
+      if (delivery.custody_id) {
+         if (isSupabaseConfigured() && supabase) {
+             const { data } = await supabase.from('custodies').select('name').eq('id', delivery.custody_id).single();
+             if (data) custodyName = data.name;
+         } else {
+             const cs = await this.getCustodies();
+             const c = cs.find(x => x.id === delivery.custody_id);
+             if (c) custodyName = c.name;
+         }
+      }
       
-      const sourceLog = `Delivery to Patient: ${patientName || delivery.patient_id}`;
+      // Updated Log Format to show Location
+      const sourceLog = `Delivery to Patient: ${patientName || delivery.patient_id} | Location: ${custodyName}`;
 
       // 1. First Process Stock Transaction
       if (delivery.custody_id) {
