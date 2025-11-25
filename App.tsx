@@ -28,7 +28,8 @@ import {
   Trash2,
   Pencil,
   Info,
-  Truck
+  Truck,
+  MapPin
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -42,8 +43,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.043",
-  version: "2.0.043"
+  name: "S.P.I.N v2.0.044",
+  version: "2.0.044"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -172,6 +173,10 @@ export const App: React.FC = () => {
 
   const [showHCPModal, setShowHCPModal] = useState(false);
   const [newHCP, setNewHCP] = useState({ full_name: '', specialty: '', hospital: '' });
+
+  // Location Creation
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [newLocationName, setNewLocationName] = useState('');
 
   const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '', date: getTodayString() });
   
@@ -490,6 +495,28 @@ export const App: React.FC = () => {
         setIsSubmitting(false);
     }
   };
+  
+  const handleCreateNewLocation = async () => {
+      if (!newLocationName) return;
+      setIsSubmitting(true);
+      try {
+          const newLoc = await dataService.createCustody({
+              name: newLocationName,
+              type: 'clinic', 
+              created_at: new Date().toISOString(),
+              owner_id: user.id // Associate with creating Rep
+          });
+          await loadData();
+          setTransferForm(prev => ({ ...prev, targetCustodyId: newLoc.id }));
+          setShowLocationModal(false);
+          setNewLocationName('');
+          showToast("New location created", "success");
+      } catch (e: any) {
+          showToast(e.message, "error");
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
 
   // Duplicate Check
   useEffect(() => {
@@ -760,6 +787,44 @@ export const App: React.FC = () => {
                         >
                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Save Changes'}
                         </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* New Location Modal */}
+        {showLocationModal && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full overflow-hidden border-t-4 border-[#FFC600]">
+                    <div className="p-6">
+                        <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
+                            <MapPin className="w-5 h-5 text-[#FFC600]"/> New Transfer Location
+                        </h4>
+                        <p className="text-xs text-slate-500 mb-4">Create a new clinic or location to transfer stock to.</p>
+                        <div className="space-y-4">
+                            <input 
+                                className="w-full border p-3 rounded bg-slate-50 outline-none focus:border-[#FFC600]" 
+                                placeholder="Clinic or Location Name" 
+                                value={newLocationName} 
+                                onChange={e => setNewLocationName(e.target.value)}
+                                autoFocus
+                            />
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={() => setShowLocationModal(false)}
+                                    className="flex-1 bg-slate-100 py-3 rounded font-bold text-sm uppercase text-slate-500 hover:text-black hover:bg-slate-200"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    onClick={handleCreateNewLocation}
+                                    disabled={isSubmitting || !newLocationName.trim()}
+                                    className="flex-1 bg-black text-white py-3 rounded font-bold text-sm uppercase hover:bg-slate-800 disabled:opacity-50"
+                                >
+                                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Create'}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1298,17 +1363,27 @@ export const App: React.FC = () => {
                                                          </div>
                                                          <div>
                                                              <label className="text-xs font-bold text-slate-500 uppercase">To Location</label>
-                                                             <select 
-                                                                 required
-                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
-                                                                 value={transferForm.targetCustodyId}
-                                                                 onChange={e => setTransferForm({...transferForm, targetCustodyId: e.target.value})}
-                                                             >
-                                                                 <option value="">-- Select Destination --</option>
-                                                                 {custodies.filter(c => c.type !== 'rep').map(c => (
-                                                                     <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
-                                                                 ))}
-                                                             </select>
+                                                             <div className="flex gap-1">
+                                                                <select 
+                                                                    required
+                                                                    className="flex-1 px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600] w-full"
+                                                                    value={transferForm.targetCustodyId}
+                                                                    onChange={e => setTransferForm({...transferForm, targetCustodyId: e.target.value})}
+                                                                >
+                                                                    <option value="">-- Select Destination --</option>
+                                                                    {custodies.filter(c => c.type !== 'rep').map(c => (
+                                                                        <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                                                                    ))}
+                                                                </select>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setShowLocationModal(true)}
+                                                                    className="bg-slate-200 hover:bg-slate-300 text-slate-600 px-3 rounded flex items-center justify-center"
+                                                                    title="Create New Location"
+                                                                >
+                                                                    <Plus className="w-4 h-4" />
+                                                                </button>
+                                                             </div>
                                                          </div>
                                                          <button 
                                                              type="submit"
@@ -1440,7 +1515,8 @@ export const App: React.FC = () => {
                                                                  <th className="px-6 py-3">Name</th>
                                                                  <th className="px-6 py-3">National ID</th>
                                                                  <th className="px-6 py-3">Phone</th>
-                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Created By</th>}
+                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Medical Rep</th>}
+                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
                                                              </>
                                                          )}
                                                          {dbView === 'hcps' && (
@@ -1448,7 +1524,8 @@ export const App: React.FC = () => {
                                                                  <th className="px-6 py-3">Doctor Name</th>
                                                                  <th className="px-6 py-3">Hospital</th>
                                                                  <th className="px-6 py-3">Specialty</th>
-                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Created By</th>}
+                                                                 {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Medical Rep</th>}
+                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
                                                              </>
                                                          )}
                                                          {dbView === 'locations' && (
@@ -1457,6 +1534,7 @@ export const App: React.FC = () => {
                                                                  <th className="px-6 py-3">Type</th>
                                                                  <th className="px-6 py-3 text-right">Stock</th>
                                                                  {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Owner/Rep</th>}
+                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
                                                              </>
                                                          )}
                                                          {dbView === 'stock' && (
@@ -1465,6 +1543,7 @@ export const App: React.FC = () => {
                                                                  <th className="px-6 py-3">Source/Desc</th>
                                                                  <th className="px-6 py-3 text-right">Qty</th>
                                                                  {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Location Owner</th>}
+                                                                 {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
                                                              </>
                                                          )}
                                                          
@@ -1509,6 +1588,7 @@ export const App: React.FC = () => {
                                                                      <td className="px-6 py-3 font-mono text-slate-500">{p.national_id}</td>
                                                                      <td className="px-6 py-3 text-slate-500">{p.phone_number}</td>
                                                                      {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{ctx.mr}</td>}
+                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{ctx.dm}</td>}
                                                                      {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
                                                                         <td className="px-6 py-3 text-right flex justify-end gap-2">
                                                                             <button onClick={() => openEditModal(p, 'patients')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
@@ -1529,6 +1609,7 @@ export const App: React.FC = () => {
                                                                      <td className="px-6 py-3">{h.hospital}</td>
                                                                      <td className="px-6 py-3 text-slate-500">{h.specialty}</td>
                                                                      {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{ctx.mr}</td>}
+                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{ctx.dm}</td>}
                                                                      {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
                                                                         <td className="px-6 py-3 text-right flex justify-end gap-2">
                                                                             <button onClick={() => openEditModal(h, 'hcps')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
@@ -1549,6 +1630,7 @@ export const App: React.FC = () => {
                                                                      <td className="px-6 py-3 uppercase text-xs font-bold text-slate-500">{c.type}</td>
                                                                      <td className="px-6 py-3 text-right font-mono">{c.current_stock}</td>
                                                                      {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{c.owner_id ? ctx.mr : '-'}</td>}
+                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{c.owner_id ? ctx.dm : '-'}</td>}
                                                                      {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
                                                                         <td className="px-6 py-3 text-right flex justify-end gap-2">
                                                                             <button onClick={() => openEditModal(c, 'locations')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
@@ -1584,6 +1666,7 @@ export const App: React.FC = () => {
                                                                          {t.quantity > 0 ? '+' : ''}{t.quantity}
                                                                      </td>
                                                                      {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-xs text-slate-400">{c?.owner_id ? ctx.mr : '-'}</td>}
+                                                                     {userProfile.role === 'lm' && <td className="px-6 py-3 text-xs text-purple-600">{c?.owner_id ? ctx.dm : '-'}</td>}
                                                                      {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
                                                                         <td className="px-6 py-3 text-right flex justify-end gap-2">
                                                                             <button onClick={() => openEditModal(t, 'stock')} className="text-slate-400 hover:text-black"><Pencil className="w-4 h-4"/></button>
