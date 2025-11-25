@@ -19,15 +19,12 @@ import {
   Database,
   Syringe,
   Lock,
-  ShieldCheck,
   BarChart3,
   UserCircle,
   Stethoscope,
   Building2,
   ArrowRight,
-  ArrowLeftRight,
   Briefcase,
-  Store,
   X,
   Undo2,
   History,
@@ -40,10 +37,12 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  Network,
   Filter,
   Maximize2,
-  Minimize2
+  Minimize2,
+  MapPin,
+  TrendingUp,
+  List
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -52,26 +51,19 @@ import {
   ResponsiveContainer, 
   Tooltip as RechartsTooltip 
 } from 'recharts';
-import { AIReportModal } from './components/AIReportModal';
 import { ProfileModal } from './components/ProfileModal';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.033",
-  version: "2.0.033"
+  name: "S.P.I.N v2.0.034",
+  version: "2.0.034"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
 type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock' | 'patients';
 
 const COLORS = ['#FFC600', '#000000', '#94a3b8', '#475569', '#cbd5e1'];
-
-const PRODUCT_COLOR_MAP: Record<string, string> = {
-  'glargivin-100': '#8b5cf6', 
-  'humaxin-r': '#eab308',     
-  'humaxin-mix': '#f97316',   
-};
 
 const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
     useEffect(() => {
@@ -82,12 +74,29 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
     const bg = type === 'success' ? 'bg-green-600' : type === 'error' ? 'bg-red-600' : 'bg-blue-600';
 
     return (
-        <div className={`fixed bottom-6 right-6 z-[100] ${bg} text-white px-6 py-4 rounded-lg shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300`}>
+        <div className={`fixed bottom-12 right-6 z-[100] ${bg} text-white px-6 py-4 rounded-lg shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300`}>
             {type === 'success' && <CheckCircle className="w-5 h-5" />}
             {type === 'error' && <AlertTriangle className="w-5 h-5" />}
             {type === 'info' && <Info className="w-5 h-5" />}
             <span className="font-bold text-sm">{message}</span>
             <button onClick={onClose} className="ml-2 hover:bg-white/20 rounded-full p-1"><X className="w-4 h-4" /></button>
+        </div>
+    );
+};
+
+// Internal component for Dashboard Collapsible Sections
+const DashboardSection = ({ title, icon: Icon, children, defaultOpen = false }: { title: string, icon?: any, children?: React.ReactNode, defaultOpen?: boolean }) => {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+    return (
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-4 transition-all">
+            <button onClick={() => setIsOpen(!isOpen)} className="w-full flex items-center justify-between p-4 bg-slate-50 hover:bg-slate-100 transition-colors">
+                <div className="flex items-center gap-3 font-bold text-slate-800">
+                    {Icon && <Icon className="w-5 h-5 text-[#FFC600]" />}
+                    <span className="uppercase text-xs tracking-wider">{title}</span>
+                </div>
+                {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </button>
+            {isOpen && <div className="p-6 border-t border-slate-100 animate-in fade-in slide-in-from-top-2 duration-200">{children}</div>}
         </div>
     );
 };
@@ -113,11 +122,7 @@ export const App: React.FC = () => {
 
   const [showProfileModal, setShowProfileModal] = useState(false);
   
-  const [expandPrescribers, setExpandPrescribers] = useState(false);
-  const [expandDeliveries, setExpandDeliveries] = useState(true);
-  const [expandAll, setExpandAll] = useState(false);
-
-  // Database Filters (DM/LM)
+  // Database Filters
   const [filterDmId, setFilterDmId] = useState<string>('all');
   const [filterMrId, setFilterMrId] = useState<string>('all');
 
@@ -254,14 +259,10 @@ export const App: React.FC = () => {
       if (currentProf && !currentProf.role) currentProf.role = 'mr';
       setUserProfile(currentProf || null);
 
-      // Ensure Rep Custody Exists
       let repC = c.find(x => x.type === 'rep' && x.owner_id === user.id) || null;
-      
-      // Auto-create custody if missing for MR/Admin
       if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
           try {
               repC = await dataService.ensureRepCustody(user.id);
-              // Update local list with new custody
               if (repC) setCustodies([...c, repC]);
               else setCustodies(c);
           } catch (e) {
@@ -298,6 +299,15 @@ export const App: React.FC = () => {
         loadData();
     }
   }, [user, loadData]);
+
+  // Recalculate Stock accurately from transactions
+  const myStockLevel = useMemo(() => {
+    if (!repCustody) return 0;
+    // We filter transactions for this specific custody ID and sum quantity
+    const txs = stockTransactions.filter(t => t.custody_id === repCustody.id);
+    const calculated = txs.reduce((sum, t) => sum + t.quantity, 0);
+    return calculated;
+  }, [repCustody, stockTransactions]);
 
   const getVisibleDeliveries = () => {
       if (!userProfile) return [];
@@ -380,7 +390,16 @@ export const App: React.FC = () => {
 
 
   const handleCreatePatient = async () => {
-    if (!newPatientForm.full_name || !nidSearch) return;
+    // Validate inputs robustly
+    if (!newPatientForm.full_name) {
+        showToast("Patient name is required", "error");
+        return;
+    }
+    if (!nidSearch || nidSearch.trim().length === 0) {
+        showToast("National ID is missing. Please search again.", "error");
+        return;
+    }
+    
     setIsSubmitting(true);
     try {
         const newP = await dataService.createPatient({
@@ -511,7 +530,7 @@ export const App: React.FC = () => {
           }
 
           if (!ownerId && dbView === 'locations' && item.type === 'clinic') return true;
-          if (!ownerId) return true; // Show admin records or global records
+          if (!ownerId) return true; 
 
           if (filterMrId !== 'all' && ownerId !== filterMrId) return false;
           
@@ -589,7 +608,6 @@ export const App: React.FC = () => {
       if (userProfile.role === 'lm') {
           const myDMs = allProfiles.filter(p => p.role === 'dm' && p.manager_id === user.id);
           
-          // Compute tree
           const data = myDMs.map(dm => {
               const mrs = allProfiles.filter(p => p.role === 'mr' && p.manager_id === dm.id);
               const mrStocks = mrs.map(mr => {
@@ -811,13 +829,11 @@ export const App: React.FC = () => {
     setIsSubmitting(true);
     try {
         const finalName = newClinicForm.isPharmacy ? `${newClinicForm.name} (Pharmacy)` : newClinicForm.name;
-        // Global clinics usually don't have an owner, or are owned by creator. 
-        // We set current user as owner so they can see it, but type 'clinic' usually implies shared.
         const created = await dataService.createCustody({
             name: finalName,
             type: 'clinic',
             created_at: newClinicForm.date,
-            owner_id: user.id // Tag with creator for visibility in strict mode
+            owner_id: user.id 
         });
         showToast("Location Registered", "success");
         setNewClinicForm({ name: '', date: getTodayString(), isPharmacy: false });
@@ -1031,20 +1047,9 @@ export const App: React.FC = () => {
 
   const getProductName = (id: string) => PRODUCTS.find(p => p.id === id)?.name || id;
 
-  const handleToggleAll = () => {
-    setExpandAll(!expandAll);
-    setExpandDeliveries(!expandAll);
-    setExpandPrescribers(!expandAll);
-  };
-
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-black text-[#FFC600]"><Activity className="animate-spin w-10 h-10" /></div>;
 
-  const canDeliver = userProfile?.role === 'mr' || userProfile?.role === 'admin';
-  const canManageStock = userProfile?.role === 'mr' || userProfile?.role === 'admin';
   const isAdmin = userProfile?.role === 'admin';
-  const isDM = userProfile?.role === 'dm';
-  const isLM = userProfile?.role === 'lm';
-  const isReadOnly = isDM || isLM; 
 
   return (
     <div className="h-screen bg-slate-100 flex flex-col font-sans overflow-hidden relative">
@@ -1203,7 +1208,6 @@ export const App: React.FC = () => {
                     <div className="px-3 py-1 bg-slate-800 rounded text-[10px] font-bold uppercase text-[#FFC600] border border-slate-700">
                         {userProfile?.role === 'mr' ? 'Med Rep' : userProfile?.role === 'dm' ? 'District Mgr' : userProfile?.role === 'lm' ? 'Line Mgr' : 'Admin'}
                     </div>
-                    {/* AI Button Hidden */}
                     <div className="h-8 w-px bg-slate-800 mx-1"></div>
                     <button onClick={() => supabase?.auth.signOut()} className="text-slate-400 hover:text-white transition-colors flex items-center gap-2" title="Logout"><LogOut className="w-5 h-5" /></button>
                   </>
@@ -1217,7 +1221,7 @@ export const App: React.FC = () => {
 
       {/* Main Content Area */}
       {activeTab !== 'analytics' && (
-      <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative flex flex-col">
+      <div className="flex-1 overflow-y-auto custom-scrollbar w-full relative flex flex-col pb-12">
         <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow">
           
           <div className="flex space-x-1 bg-white p-1 rounded-xl shadow-sm border border-slate-200 mb-8 w-full md:w-auto inline-flex overflow-x-auto">
@@ -1238,7 +1242,7 @@ export const App: React.FC = () => {
             <>
                 {activeTab === 'dashboard' && (
                     <div className="space-y-6">
-                        <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
+                        <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
                              <h2 className="text-xl font-bold text-slate-800">
                                  {userProfile?.role === 'mr' ? `Territory Dashboard: ${userProfile.full_name}` : 
                                   userProfile?.role === 'dm' ? `District Dashboard: ${userProfile.full_name}` : 
@@ -1247,86 +1251,110 @@ export const App: React.FC = () => {
                              </h2>
                              <div className="flex items-center gap-2">
                                 <button onClick={() => setActiveTab('analytics')} className="flex items-center gap-2 text-xs font-bold uppercase bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded transition-colors">
-                                    <BarChart3 className="w-4 h-4" /> View Full Analytics
-                                </button>
-                                <button onClick={handleToggleAll} className="flex items-center gap-2 text-xs font-bold uppercase bg-slate-50 text-slate-600 hover:bg-slate-100 px-4 py-2 rounded transition-colors" title={expandAll ? "Collapse All" : "Expand All"}>
-                                    {expandAll ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                                    <BarChart3 className="w-4 h-4" /> Full Analytics
                                 </button>
                              </div>
                         </div>
 
-                        {/* Summary Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-[#FFC600] relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
-                                <div className="relative z-10">
-                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Deliveries</p>
-                                    <h3 className="text-3xl font-black text-slate-900">{visibleDeliveries.length}</h3>
+                        {/* Collapsible Sections */}
+                        
+                        <DashboardSection title="Analysis: Delivered Pens" icon={Syringe} defaultOpen={false}>
+                             <div className="flex flex-col md:flex-row items-center gap-8">
+                                <div className="text-center md:text-left">
+                                    <h4 className="text-4xl font-black text-slate-900">{visibleDeliveries.length}</h4>
+                                    <p className="text-xs uppercase font-bold text-slate-400">Total Deliveries</p>
                                 </div>
-                                <Syringe className="absolute right-4 bottom-4 w-12 h-12 text-[#FFC600] opacity-10 group-hover:scale-110 transition-transform" />
-                            </div>
-                            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-slate-800 relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
-                                <div className="relative z-10">
-                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Prescribers</p>
-                                    <h3 className="text-3xl font-black text-slate-900">{uniquePrescribersCount}</h3>
+                                <div className="flex-1 w-full grid grid-cols-2 gap-4">
+                                     {productBreakdown.map(p => (
+                                         <div key={p.id} className="bg-slate-50 p-3 rounded border border-slate-100">
+                                             <div className="flex justify-between items-center mb-1">
+                                                 <span className="text-[10px] font-bold uppercase text-slate-500">{p.name}</span>
+                                                 <span className="text-xs font-bold bg-white px-2 py-0.5 rounded shadow-sm">{p.value}</span>
+                                             </div>
+                                             <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                                 <div className="h-full bg-[#FFC600]" style={{ width: `${p.percentage}%` }}></div>
+                                             </div>
+                                         </div>
+                                     ))}
                                 </div>
-                                <Stethoscope className="absolute right-4 bottom-4 w-12 h-12 text-slate-800 opacity-10 group-hover:scale-110 transition-transform" />
-                            </div>
-                            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-blue-500 relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
-                                <div className="relative z-10">
-                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">My Stock Level</p>
-                                    <h3 className="text-3xl font-black text-slate-900">{repCustody?.current_stock || 0}</h3>
-                                </div>
-                                <Package className="absolute right-4 bottom-4 w-12 h-12 text-blue-500 opacity-10 group-hover:scale-110 transition-transform" />
-                            </div>
-                             <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-green-500 relative overflow-hidden group hover:translate-y-[-2px] transition-transform">
-                                <div className="relative z-10">
-                                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">Unique Patients</p>
-                                    <h3 className="text-3xl font-black text-slate-900">{new Set(visibleDeliveries.map(d => d.patient_id)).size}</h3>
-                                </div>
-                                <Users className="absolute right-4 bottom-4 w-12 h-12 text-green-500 opacity-10 group-hover:scale-110 transition-transform" />
-                            </div>
-                        </div>
+                             </div>
+                        </DashboardSection>
 
-                        {/* Recent Activity */}
-                        <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="p-4 border-b border-slate-100 flex justify-between items-center cursor-pointer bg-slate-50" onClick={() => setExpandDeliveries(!expandDeliveries)}>
-                                <h3 className="font-bold text-slate-800 flex items-center gap-2"><History className="w-4 h-4 text-[#FFC600]" /> Recent Deliveries</h3>
-                                {expandDeliveries ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                        <DashboardSection title="Analysis: Prescriber Trends" icon={Stethoscope} defaultOpen={false}>
+                            <div className="flex items-center justify-between mb-4">
+                                <span className="text-sm font-bold text-slate-700">Active Prescribers: <span className="text-black">{uniquePrescribersCount}</span></span>
                             </div>
-                            {expandDeliveries && (
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left text-sm">
-                                        <thead className="bg-white text-xs uppercase text-slate-500 font-bold border-b border-slate-100">
-                                            <tr>
-                                                <th className="p-4">Date</th>
-                                                <th className="p-4">Prescriber</th>
-                                                <th className="p-4">Product</th>
-                                                <th className="p-4">Patient</th>
-                                                <th className="p-4">Status</th>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="bg-slate-50 uppercase text-slate-500 font-bold">
+                                        <tr>
+                                            <th className="p-3">Doctor</th>
+                                            <th className="p-3 text-right">Volume</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {topPrescribers.map((d, i) => (
+                                            <tr key={i}>
+                                                <td className="p-3 font-bold text-slate-700">{d.name}</td>
+                                                <td className="p-3 text-right font-mono">{d.count}</td>
                                             </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-50">
-                                            {visibleDeliveries.slice(0, 5).map(d => (
-                                                <tr key={d.id} className="hover:bg-slate-50 transition-colors">
-                                                    <td className="p-4 font-mono text-xs text-slate-500">{formatDateFriendly(d.delivery_date)}</td>
-                                                    <td className="p-4 font-bold text-slate-700">{d.hcp?.full_name}</td>
-                                                    <td className="p-4">
-                                                        <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded border ${getProductStyles(d.product_id)}`}>
-                                                            {getProductName(d.product_id)}
-                                                        </span>
-                                                    </td>
-                                                    <td className="p-4 text-slate-600">***{d.patient?.national_id.slice(-4)}</td>
-                                                    <td className="p-4"><span className="flex items-center gap-1 text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded w-fit"><CheckCircle className="w-3 h-3" /> COMPLETED</span></td>
-                                                </tr>
-                                            ))}
-                                            {visibleDeliveries.length === 0 && (
-                                                <tr><td colSpan={5} className="p-8 text-center text-slate-400 italic">No recent delivery records found.</td></tr>
-                                            )}
-                                        </tbody>
-                                    </table>
+                                        ))}
+                                        {topPrescribers.length === 0 && <tr><td colSpan={2} className="p-3 text-center text-slate-400">No data available</td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </DashboardSection>
+
+                        <DashboardSection title="Analysis: Supply Locations" icon={MapPin} defaultOpen={false}>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="bg-slate-50 p-4 rounded border border-slate-100 text-center">
+                                    <h4 className="text-2xl font-black text-slate-900">{custodies.filter(c => c.type === 'clinic').length}</h4>
+                                    <p className="text-[10px] uppercase font-bold text-slate-400">Total Locations</p>
                                 </div>
-                            )}
-                        </div>
+                                <div className="bg-slate-50 p-4 rounded border border-slate-100 text-center">
+                                    <h4 className="text-2xl font-black text-slate-900">{custodies.reduce((sum, c) => c.type === 'clinic' ? sum + (c.current_stock||0) : sum, 0)}</h4>
+                                    <p className="text-[10px] uppercase font-bold text-slate-400">Stock in Clinics</p>
+                                </div>
+                            </div>
+                        </DashboardSection>
+
+                        <DashboardSection title="Analysis: My Stock Level" icon={Package} defaultOpen={false}>
+                            <div className="flex items-center gap-6">
+                                 <div className="bg-blue-50 p-6 rounded-lg text-center border border-blue-100">
+                                    <Package className="w-8 h-8 text-blue-500 mx-auto mb-2 opacity-50" />
+                                    <h3 className="text-4xl font-black text-blue-900">{myStockLevel}</h3>
+                                    <p className="text-[10px] font-bold uppercase text-blue-400">Available Pens</p>
+                                 </div>
+                                 <div className="text-xs text-slate-500">
+                                     <p>This stock level is calculated from your verified transactions.</p>
+                                     <button onClick={() => setActiveTab('custody')} className="mt-2 text-blue-600 hover:underline font-bold">Manage Stock &rarr;</button>
+                                 </div>
+                            </div>
+                        </DashboardSection>
+
+                        <DashboardSection title="Recent Activity (Latest 3)" icon={History} defaultOpen={false}>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="bg-slate-50 uppercase text-slate-500 font-bold border-b border-slate-100">
+                                        <tr>
+                                            <th className="p-3">Date</th>
+                                            <th className="p-3">Product</th>
+                                            <th className="p-3">Patient</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {visibleDeliveries.slice(0, 3).map(d => (
+                                            <tr key={d.id}>
+                                                <td className="p-3 font-mono text-slate-500">{formatDateFriendly(d.delivery_date)}</td>
+                                                <td className="p-3"><span className={`px-2 py-0.5 rounded border text-[10px] uppercase font-bold ${getProductStyles(d.product_id)}`}>{getProductName(d.product_id)}</span></td>
+                                                <td className="p-3 font-bold text-slate-700">***{d.patient?.national_id.slice(-4)}</td>
+                                            </tr>
+                                        ))}
+                                        {visibleDeliveries.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-slate-400 italic">No recent activity</td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </DashboardSection>
                     </div>
                 )}
 
@@ -1348,7 +1376,7 @@ export const App: React.FC = () => {
                                             </div>
                                         </div>
                                         <div className="flex items-baseline gap-2 mb-8">
-                                            <span className="text-5xl font-black text-slate-900">{repCustody?.current_stock || 0}</span>
+                                            <span className="text-5xl font-black text-slate-900">{myStockLevel}</span>
                                             <span className="text-sm font-bold text-slate-400 uppercase">Pens Available</span>
                                         </div>
                                         
@@ -1406,10 +1434,6 @@ export const App: React.FC = () => {
                                                                         quantity: parseInt(el.value),
                                                                         sourceType: 'rep'
                                                                     });
-                                                                    // We need to trigger submit, but state update is async.
-                                                                    // For simplicity in this UI, let's just create a quick inline handler or modal. 
-                                                                    // Better: Populate the transfer form below or handle immediately.
-                                                                    // Let's modify the transfer form state and simulate a submit or just call the function.
                                                                     if (window.confirm(`Transfer ${el.value} pens to ${clinic.name}?`)) {
                                                                         dataService.processStockTransaction(clinic.id, parseInt(el.value), getTodayString(), 'Transfer from MR', repCustody?.id)
                                                                             .then(() => { showToast("Transfer Successful", "success"); loadData(); el.value = ''; })
@@ -1462,7 +1486,7 @@ export const App: React.FC = () => {
                                          <div className="bg-slate-50 p-6 rounded-lg border-2 border-dashed border-slate-300 text-center animate-in fade-in zoom-in">
                                              <p className="text-slate-800 font-bold mb-4">Patient not found. Register new?</p>
                                              <div className="space-y-3">
-                                                 <input type="text" placeholder="Full Name" className="w-full p-3 border rounded" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} />
+                                                 <input type="text" placeholder="Full Name (Required)" className="w-full p-3 border rounded" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} />
                                                  <input type="text" placeholder="Phone Number" className="w-full p-3 border rounded" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} />
                                                  <button onClick={handleCreatePatient} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase rounded shadow-sm">Register & Continue</button>
                                              </div>
@@ -1728,11 +1752,13 @@ export const App: React.FC = () => {
           )}
         </main>
         
-        {/* Footer */}
-        <footer className="bg-slate-900 text-slate-500 text-center p-6 text-xs border-t border-slate-800">
-            <p className="font-bold text-slate-400 mb-1">SPIN &copy; {new Date().getFullYear()}</p>
-            <p className="mb-2">Supply & Insulin Pen Network Management System</p>
-            <p className="font-mono text-[10px] opacity-50">v{METADATA.version}</p>
+        {/* Updated Fixed Footer */}
+        <footer className="fixed bottom-0 left-0 w-full bg-slate-900 text-slate-500 text-[10px] flex justify-between items-center px-4 py-2 border-t border-slate-800 z-50 shadow-lg">
+            <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-400">SPIN &copy; {new Date().getFullYear()}</span>
+                <span className="hidden sm:inline opacity-70">Supply & Insulin Pen Network</span>
+            </div>
+            <span className="font-mono opacity-50 font-bold">v{METADATA.version}</span>
         </footer>
       </div>
       )}
