@@ -501,14 +501,24 @@ export const dataService = {
   },
 
   async processStockTransaction(custodyId: string, quantity: number, date: string, source: string, fromCustodyId?: string): Promise<void> {
-      const custodies = await this.getCustodies();
-      const target = custodies.find(c => c.id === custodyId);
+      // Helper to get FRESH custody data (avoid stale state bug)
+      const getFreshCustody = async (id: string): Promise<Custody | null> => {
+          if (isSupabaseConfigured() && supabase) {
+              const { data } = await supabase.from('custodies').select('*').eq('id', id).single();
+              return data;
+          } else {
+              const list = await this.getCustodies();
+              return list.find(c => c.id === id) || null;
+          }
+      };
+
+      const target = await getFreshCustody(custodyId);
       if (target) {
           await this.updateCustody(target.id, { current_stock: (target.current_stock || 0) + quantity });
       }
 
       if (fromCustodyId) {
-          const sourceCustody = custodies.find(c => c.id === fromCustodyId);
+          const sourceCustody = await getFreshCustody(fromCustodyId);
           if (sourceCustody) {
                await this.updateCustody(sourceCustody.id, { current_stock: (sourceCustody.current_stock || 0) - quantity });
                const deductionTx = {
@@ -523,7 +533,7 @@ export const dataService = {
 
       let finalSource = source;
       if (fromCustodyId) {
-          const sourceName = custodies.find(c => c.id === fromCustodyId)?.name || fromCustodyId;
+          const sourceName = (await getFreshCustody(fromCustodyId))?.name || fromCustodyId;
           finalSource = `Transfer from ${sourceName}`;
       }
 

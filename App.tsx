@@ -56,8 +56,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.034",
-  version: "2.0.034"
+  name: "S.P.I.N v2.0.035",
+  version: "2.0.035"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -84,8 +84,8 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
     );
 };
 
-// Internal component for Dashboard Collapsible Sections
-const DashboardSection = ({ title, icon: Icon, children, defaultOpen = false }: { title: string, icon?: any, children?: React.ReactNode, defaultOpen?: boolean }) => {
+// Dashboard Section with Summary Support
+const DashboardSection = ({ title, summary, icon: Icon, children, defaultOpen = false }: { title: string, summary?: React.ReactNode, icon?: any, children?: React.ReactNode, defaultOpen?: boolean }) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
     return (
         <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-4 transition-all">
@@ -94,7 +94,14 @@ const DashboardSection = ({ title, icon: Icon, children, defaultOpen = false }: 
                     {Icon && <Icon className="w-5 h-5 text-[#FFC600]" />}
                     <span className="uppercase text-xs tracking-wider">{title}</span>
                 </div>
-                {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                <div className="flex items-center gap-3">
+                    {summary && !isOpen && (
+                         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
+                             {summary}
+                         </div>
+                    )}
+                    {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                </div>
             </button>
             {isOpen && <div className="p-6 border-t border-slate-100 animate-in fade-in slide-in-from-top-2 duration-200">{children}</div>}
         </div>
@@ -259,7 +266,22 @@ export const App: React.FC = () => {
       if (currentProf && !currentProf.role) currentProf.role = 'mr';
       setUserProfile(currentProf || null);
 
+      // --- CUSTODY LOGIC IMPROVED ---
       let repC = c.find(x => x.type === 'rep' && x.owner_id === user.id) || null;
+      
+      // Recovery: If no rep custody found linked to me, but there is an "orphaned" one (legacy data issue)
+      if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
+          const orphan = c.find(x => x.type === 'rep' && x.name === 'My Rep Inventory' && !x.owner_id);
+          if (orphan) {
+              // Claim it
+              try {
+                  await dataService.updateCustody(orphan.id, { owner_id: user.id });
+                  repC = { ...orphan, owner_id: user.id };
+              } catch(e) { console.error("Claim failed", e); }
+          }
+      }
+
+      // If still no custody, create one
       if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
           try {
               repC = await dataService.ensureRepCustody(user.id);
@@ -300,14 +322,10 @@ export const App: React.FC = () => {
     }
   }, [user, loadData]);
 
-  // Recalculate Stock accurately from transactions
+  // FIXED: Rely on snapshot for accuracy (Source of truth is Custodies Table)
   const myStockLevel = useMemo(() => {
-    if (!repCustody) return 0;
-    // We filter transactions for this specific custody ID and sum quantity
-    const txs = stockTransactions.filter(t => t.custody_id === repCustody.id);
-    const calculated = txs.reduce((sum, t) => sum + t.quantity, 0);
-    return calculated;
-  }, [repCustody, stockTransactions]);
+    return repCustody?.current_stock || 0;
+  }, [repCustody]);
 
   const getVisibleDeliveries = () => {
       if (!userProfile) return [];
@@ -411,7 +429,7 @@ export const App: React.FC = () => {
         setFoundPatient(newP);
         showToast("New patient registered", "success");
     } catch(e: any) {
-        showToast(`Error creating patient: ${e.message || 'Unknown error'}`, "error");
+        showToast(`Error creating patient: ${e.message || 'Unknown error'}. Try running schema update.`, "error");
     } finally {
         setIsSubmitting(false);
     }
@@ -1256,9 +1274,13 @@ export const App: React.FC = () => {
                              </div>
                         </div>
 
-                        {/* Collapsible Sections */}
+                        {/* Collapsible Sections with Summaries */}
                         
-                        <DashboardSection title="Analysis: Delivered Pens" icon={Syringe} defaultOpen={false}>
+                        <DashboardSection 
+                            title="Analysis: Delivered Pens" 
+                            icon={Syringe} 
+                            summary={<span className="text-lg font-black">{visibleDeliveries.length}</span>}
+                        >
                              <div className="flex flex-col md:flex-row items-center gap-8">
                                 <div className="text-center md:text-left">
                                     <h4 className="text-4xl font-black text-slate-900">{visibleDeliveries.length}</h4>
@@ -1280,7 +1302,11 @@ export const App: React.FC = () => {
                              </div>
                         </DashboardSection>
 
-                        <DashboardSection title="Analysis: Prescriber Trends" icon={Stethoscope} defaultOpen={false}>
+                        <DashboardSection 
+                            title="Analysis: Prescriber Trends" 
+                            icon={Stethoscope}
+                            summary={<span className="text-xs font-bold bg-slate-100 px-2 py-1 rounded">{uniquePrescribersCount} Doctors</span>}
+                        >
                             <div className="flex items-center justify-between mb-4">
                                 <span className="text-sm font-bold text-slate-700">Active Prescribers: <span className="text-black">{uniquePrescribersCount}</span></span>
                             </div>
@@ -1305,7 +1331,11 @@ export const App: React.FC = () => {
                             </div>
                         </DashboardSection>
 
-                        <DashboardSection title="Analysis: Supply Locations" icon={MapPin} defaultOpen={false}>
+                        <DashboardSection 
+                            title="Analysis: Supply Locations" 
+                            icon={MapPin}
+                            summary={<span className="text-xs font-bold text-slate-500">{custodies.filter(c => c.type === 'clinic').length} Locations</span>}
+                        >
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 <div className="bg-slate-50 p-4 rounded border border-slate-100 text-center">
                                     <h4 className="text-2xl font-black text-slate-900">{custodies.filter(c => c.type === 'clinic').length}</h4>
@@ -1318,7 +1348,12 @@ export const App: React.FC = () => {
                             </div>
                         </DashboardSection>
 
-                        <DashboardSection title="Analysis: My Stock Level" icon={Package} defaultOpen={false}>
+                        <DashboardSection 
+                            title="Analysis: My Stock Level" 
+                            icon={Package}
+                            summary={<span className="text-lg font-black text-blue-600">{myStockLevel}</span>}
+                            defaultOpen={true}
+                        >
                             <div className="flex items-center gap-6">
                                  <div className="bg-blue-50 p-6 rounded-lg text-center border border-blue-100">
                                     <Package className="w-8 h-8 text-blue-500 mx-auto mb-2 opacity-50" />
@@ -1332,7 +1367,7 @@ export const App: React.FC = () => {
                             </div>
                         </DashboardSection>
 
-                        <DashboardSection title="Recent Activity (Latest 3)" icon={History} defaultOpen={false}>
+                        <DashboardSection title="Recent Activity (Latest 3)" icon={History}>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-slate-50 uppercase text-slate-500 font-bold border-b border-slate-100">
