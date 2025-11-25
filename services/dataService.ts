@@ -1,4 +1,5 @@
 
+
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Patient, HCP, Delivery, Custody, StockTransaction, PRODUCTS, UserProfile } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -76,7 +77,21 @@ export const dataService = {
               access: p.access || 'no'
           }));
       } else {
-          return JSON.parse(localStorage.getItem(KEYS.PROFILES) || '[]');
+          const stored = localStorage.getItem(KEYS.PROFILES);
+          // Check if stored is null OR empty array
+          let profiles = stored ? JSON.parse(stored) : [];
+          
+          if (profiles.length === 0) {
+              const mocks: UserProfile[] = [
+                  { id: 'demo-user', full_name: 'Demo Medical Rep', employee_id: 'MR-001', role: 'mr', email: 'demo@spin-net.com', access: 'yes' },
+                  { id: 'admin-user', full_name: 'Super Administrator', employee_id: 'ADMIN-01', role: 'admin', email: 'admin@spin.com', access: 'yes' },
+                  { id: 'dm-user', full_name: 'Demo Manager', employee_id: 'DM-001', role: 'dm', email: 'manager@spin.com', access: 'yes' },
+                  { id: 'lm-user', full_name: 'Demo Line Mgr', employee_id: 'LM-001', role: 'lm', email: 'director@spin.com', access: 'yes' }
+              ];
+              localStorage.setItem(KEYS.PROFILES, JSON.stringify(mocks));
+              return mocks;
+          }
+          return profiles;
       }
   },
 
