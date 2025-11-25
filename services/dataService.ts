@@ -270,7 +270,22 @@ export const dataService = {
      const all = await this.getCustodies();
      if (!userId) return null;
      // Strict filtering by type and owner
-     return all.find(c => c.type === 'rep' && c.owner_id === userId) || null;
+     // If not found, try finding one without owner (legacy) and claim it if user has no other inventory
+     let found = all.find(c => c.type === 'rep' && c.owner_id === userId);
+     
+     if (!found) {
+         // Auto-recovery for legacy data: if a 'rep' custody exists with NO owner, assume it belongs to the current user
+         const orphan = all.find(c => c.type === 'rep' && !c.owner_id && c.name === 'My Rep Inventory');
+         if (orphan && userId) {
+             // Claim it
+             try {
+                await this.updateCustody(orphan.id, { owner_id: userId });
+                return { ...orphan, owner_id: userId };
+             } catch(e) { console.warn("Failed to claim orphan custody", e); }
+         }
+     }
+     
+     return found || null;
   },
 
   // NEW: Ensures a custody record exists for the rep. Creates one if missing.
@@ -389,6 +404,7 @@ export const dataService = {
   },
 
   async logDelivery(delivery: Omit<Delivery, 'id'>, userName: string): Promise<void> {
+      // 1. First Process Stock Transaction
       if (delivery.custody_id) {
           await this.processStockTransaction(
               delivery.custody_id,
@@ -398,6 +414,7 @@ export const dataService = {
           );
       }
 
+      // 2. Then Log Delivery Record
       if (isSupabaseConfigured() && supabase) {
           const { error } = await supabase.from('deliveries').insert([{
              patient_id: delivery.patient_id,
@@ -475,6 +492,7 @@ export const dataService = {
               if (txIdToDelete) {
                   await this.deleteStockTransaction(txIdToDelete);
               } else {
+                  // Fallback: Manually fix stock if tx not found
                   await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + delivery.quantity });
               }
           }
@@ -501,7 +519,7 @@ export const dataService = {
   },
 
   async processStockTransaction(custodyId: string, quantity: number, date: string, source: string, fromCustodyId?: string): Promise<void> {
-      // Helper to get FRESH custody data (avoid stale state bug)
+      // CRITICAL: Always fetch fresh custody data inside the transaction block to avoid race conditions
       const getFreshCustody = async (id: string): Promise<Custody | null> => {
           if (isSupabaseConfigured() && supabase) {
               const { data } = await supabase.from('custodies').select('*').eq('id', id).single();
@@ -512,15 +530,21 @@ export const dataService = {
           }
       };
 
+      // 1. Update Target Custody
       const target = await getFreshCustody(custodyId);
       if (target) {
           await this.updateCustody(target.id, { current_stock: (target.current_stock || 0) + quantity });
+      } else {
+          throw new Error("Target custody not found");
       }
 
+      // 2. If Transfer, Update Source Custody
       if (fromCustodyId) {
           const sourceCustody = await getFreshCustody(fromCustodyId);
           if (sourceCustody) {
                await this.updateCustody(sourceCustody.id, { current_stock: (sourceCustody.current_stock || 0) - quantity });
+               
+               // Record Deduction Transaction for Source
                const deductionTx = {
                    custody_id: sourceCustody.id,
                    quantity: -quantity,
@@ -531,12 +555,14 @@ export const dataService = {
           }
       }
 
+      // 3. Resolve Source Name for Final Log
       let finalSource = source;
       if (fromCustodyId) {
           const sourceName = (await getFreshCustody(fromCustodyId))?.name || fromCustodyId;
           finalSource = `Transfer from ${sourceName}`;
       }
 
+      // 4. Save Main Transaction
       await this.saveTransaction({
           custody_id: custodyId,
           quantity: quantity,
@@ -584,6 +610,7 @@ export const dataService = {
           const custody = custodies.find(c => c.id === tx!.custody_id);
           
           if (custody) {
+              // Revert the stock change
               const reverseQty = -1 * tx.quantity;
               await this.updateCustody(custody.id, { current_stock: (custody.current_stock || 0) + reverseQty });
           }

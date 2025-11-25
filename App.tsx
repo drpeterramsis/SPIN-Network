@@ -42,7 +42,8 @@ import {
   Minimize2,
   MapPin,
   TrendingUp,
-  List
+  List,
+  Sparkles
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -53,11 +54,12 @@ import {
 } from 'recharts';
 import { ProfileModal } from './components/ProfileModal';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { AIReportModal } from './components/AIReportModal';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.035",
-  version: "2.0.035"
+  name: "S.P.I.N v2.0.036",
+  version: "2.0.036"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -128,6 +130,7 @@ export const App: React.FC = () => {
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
 
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showAIReportModal, setShowAIReportModal] = useState(false);
   
   // Database Filters
   const [filterDmId, setFilterDmId] = useState<string>('all');
@@ -218,6 +221,7 @@ export const App: React.FC = () => {
               setAllProfiles([]);
               setUserProfile(null);
               setShowProfileModal(false);
+              setShowAIReportModal(false);
           }
         });
         setAuthLoading(false);
@@ -1103,6 +1107,7 @@ export const App: React.FC = () => {
 
       <Auth isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} onLogin={setUser} />
       {user && <ProfileModal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} user={user} onLogout={() => { setUser(null); setShowProfileModal(false); }} />}
+      {user && <AIReportModal isOpen={showAIReportModal} onClose={() => setShowAIReportModal(false)} deliveries={visibleDeliveries} userEmail={user.email} />}
       
       {/* Full Page Analytics View */}
       {user && activeTab === 'analytics' && (
@@ -1268,6 +1273,9 @@ export const App: React.FC = () => {
                                   'Network Dashboard'}
                              </h2>
                              <div className="flex items-center gap-2">
+                                <button onClick={() => setShowAIReportModal(true)} className="flex items-center gap-2 text-xs font-bold uppercase bg-black text-[#FFC600] hover:bg-slate-800 px-4 py-2 rounded transition-colors shadow-sm border border-[#FFC600]">
+                                    <Sparkles className="w-4 h-4" /> AI Report
+                                </button>
                                 <button onClick={() => setActiveTab('analytics')} className="flex items-center gap-2 text-xs font-bold uppercase bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded transition-colors">
                                     <BarChart3 className="w-4 h-4" /> Full Analytics
                                 </button>
@@ -1392,409 +1400,9 @@ export const App: React.FC = () => {
                         </DashboardSection>
                     </div>
                 )}
-
-                {activeTab === 'custody' && (
-                    <div className="space-y-8">
-                         {renderTeamInventory()}
-
-                         {(userProfile?.role === 'mr' || userProfile?.role === 'admin') && (
-                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                <div className="space-y-6">
-                                    <div className="bg-white p-6 rounded-lg shadow-sm border-t-4 border-blue-500">
-                                        <div className="flex justify-between items-start mb-6">
-                                            <div>
-                                                <h3 className="text-xl font-bold text-slate-900">My Inventory</h3>
-                                                <p className="text-xs text-slate-500">Current Stock Level</p>
-                                            </div>
-                                            <div className="bg-blue-50 p-2 rounded-lg">
-                                                <Package className="w-8 h-8 text-blue-500" />
-                                            </div>
-                                        </div>
-                                        <div className="flex items-baseline gap-2 mb-8">
-                                            <span className="text-5xl font-black text-slate-900">{myStockLevel}</span>
-                                            <span className="text-sm font-bold text-slate-400 uppercase">Pens Available</span>
-                                        </div>
-                                        
-                                        <form onSubmit={handleReceiveStock} className="bg-slate-50 p-4 rounded border border-slate-200 space-y-3">
-                                            <p className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Plus className="w-3 h-3" /> Add Stock from Educator</p>
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <input type="number" placeholder="Qty" className="w-full p-2 text-sm border rounded" value={receiveForm.quantity || ''} onChange={e => setReceiveForm({...receiveForm, quantity: parseInt(e.target.value)})} />
-                                                <input type="date" className="w-full p-2 text-sm border rounded" value={receiveForm.date} onChange={e => setReceiveForm({...receiveForm, date: e.target.value})} />
-                                            </div>
-                                            <input 
-                                                type="text" 
-                                                placeholder="Educator Name" 
-                                                className="w-full p-2 text-sm border rounded" 
-                                                value={receiveForm.educatorName} 
-                                                onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
-                                                list="educators"
-                                            />
-                                            <datalist id="educators">{educatorSuggestions.map((e,i) => <option key={i} value={e} />)}</datalist>
-                                            <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 text-xs uppercase rounded">Confirm Receipt</button>
-                                        </form>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-6">
-                                     <div className="bg-white p-6 rounded-lg shadow-sm border-t-4 border-[#FFC600]">
-                                        <div className="flex justify-between items-center mb-6">
-                                            <h3 className="text-xl font-bold text-slate-900">Supply Locations</h3>
-                                            <button onClick={() => setShowClinicModal(true)} className="text-xs font-bold uppercase bg-black text-[#FFC600] px-3 py-1.5 rounded hover:bg-slate-800 flex items-center gap-1"><Plus className="w-3 h-3"/> New Location</button>
-                                        </div>
-
-                                        <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                                            {custodies.filter(c => c.type === 'clinic').map(clinic => (
-                                                <div key={clinic.id} className="p-4 border border-slate-200 rounded hover:border-[#FFC600] transition-colors bg-slate-50">
-                                                    <div className="flex justify-between items-center mb-2">
-                                                        <h4 className="font-bold text-slate-800">{clinic.name}</h4>
-                                                        <span className="bg-white px-2 py-1 rounded text-xs font-mono font-bold border shadow-sm">{clinic.current_stock || 0}</span>
-                                                    </div>
-                                                    <div className="flex justify-between items-center text-xs text-slate-500 mb-3">
-                                                        <span>Updated: {getLastSupplyDate(clinic.id)}</span>
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <input 
-                                                            type="number" 
-                                                            className="w-20 p-1 border rounded text-xs" 
-                                                            placeholder="Qty" 
-                                                            id={`transfer-${clinic.id}`}
-                                                        />
-                                                        <button 
-                                                            onClick={() => {
-                                                                const el = document.getElementById(`transfer-${clinic.id}`) as HTMLInputElement;
-                                                                if(el.value) {
-                                                                    setTransferForm({
-                                                                        ...transferForm,
-                                                                        toCustodyId: clinic.id,
-                                                                        quantity: parseInt(el.value),
-                                                                        sourceType: 'rep'
-                                                                    });
-                                                                    if (window.confirm(`Transfer ${el.value} pens to ${clinic.name}?`)) {
-                                                                        dataService.processStockTransaction(clinic.id, parseInt(el.value), getTodayString(), 'Transfer from MR', repCustody?.id)
-                                                                            .then(() => { showToast("Transfer Successful", "success"); loadData(); el.value = ''; })
-                                                                            .catch(e => showToast(e.message, "error"));
-                                                                    }
-                                                                }
-                                                            }}
-                                                            className="flex-1 bg-[#FFC600] hover:bg-yellow-400 text-black font-bold text-[10px] uppercase rounded py-1"
-                                                        >
-                                                            Supply
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                            {custodies.filter(c => c.type === 'clinic').length === 0 && (
-                                                <p className="text-center text-slate-400 italic text-sm py-8">No clinics or pharmacies registered yet.</p>
-                                            )}
-                                        </div>
-                                     </div>
-                                </div>
-                             </div>
-                         )}
-                    </div>
-                )}
-                
-                {activeTab === 'deliver' && (
-                     <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                        <div className="bg-black p-4 text-center">
-                            <h2 className="text-white font-bold uppercase tracking-wider flex items-center justify-center gap-2"><Syringe className="w-5 h-5 text-[#FFC600]" /> Record Delivery</h2>
-                        </div>
-                        
-                        <div className="p-6 md:p-8">
-                             {/* STEP 1: PATIENT ID */}
-                             {step === 1 && (
-                                 <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Patient National ID / Phone</label>
-                                     <div className="flex gap-2 mb-6">
-                                         <input 
-                                            type="text" 
-                                            value={nidSearch} 
-                                            onChange={e => setNidSearch(e.target.value)} 
-                                            className="flex-1 border-2 border-slate-200 p-4 rounded-lg text-lg font-mono focus:border-[#FFC600] outline-none transition-colors"
-                                            placeholder="Search ID..."
-                                            onKeyDown={e => e.key === 'Enter' && handlePatientSearch()}
-                                         />
-                                         <button onClick={handlePatientSearch} className="bg-black text-[#FFC600] px-6 rounded-lg font-bold uppercase hover:bg-slate-800 transition-colors"><Search className="w-6 h-6" /></button>
-                                     </div>
-
-                                     {hasSearched && !foundPatient && (
-                                         <div className="bg-slate-50 p-6 rounded-lg border-2 border-dashed border-slate-300 text-center animate-in fade-in zoom-in">
-                                             <p className="text-slate-800 font-bold mb-4">Patient not found. Register new?</p>
-                                             <div className="space-y-3">
-                                                 <input type="text" placeholder="Full Name (Required)" className="w-full p-3 border rounded" value={newPatientForm.full_name} onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})} />
-                                                 <input type="text" placeholder="Phone Number" className="w-full p-3 border rounded" value={newPatientForm.phone_number} onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})} />
-                                                 <button onClick={handleCreatePatient} className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase rounded shadow-sm">Register & Continue</button>
-                                             </div>
-                                         </div>
-                                     )}
-
-                                     {foundPatient && (
-                                         <div className="bg-green-50 border border-green-200 p-4 rounded-lg flex justify-between items-center animate-in fade-in zoom-in">
-                                             <div>
-                                                 <p className="text-xs font-bold text-green-700 uppercase">Patient Verified</p>
-                                                 <p className="font-bold text-lg text-green-900">{foundPatient.full_name}</p>
-                                                 <p className="font-mono text-sm text-green-700">{foundPatient.national_id}</p>
-                                             </div>
-                                             <button onClick={() => setStep(2)} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded font-bold uppercase text-sm shadow-lg flex items-center gap-2">Next <ArrowRight className="w-4 h-4" /></button>
-                                         </div>
-                                     )}
-                                 </div>
-                             )}
-
-                             {/* STEP 2: DETAILS */}
-                             {step === 2 && foundPatient && (
-                                 <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-300">
-                                     <div className="flex justify-between items-center pb-4 border-b border-slate-100">
-                                         <div>
-                                             <p className="text-xs font-bold text-slate-400 uppercase">Patient</p>
-                                             <p className="font-bold text-slate-900">{foundPatient.full_name}</p>
-                                         </div>
-                                         <button onClick={() => setStep(1)} className="text-xs font-bold text-slate-400 hover:text-black uppercase">Change</button>
-                                     </div>
-
-                                     <div>
-                                         <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Product</label>
-                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                             {PRODUCTS.map(p => (
-                                                 <button 
-                                                    key={p.id}
-                                                    onClick={() => { setSelectedProduct(p.id); dataService.checkDuplicateDelivery(foundPatient.id, p.id).then(setDuplicateWarning); }}
-                                                    className={`p-3 rounded border-2 text-left transition-all ${getProductButtonStyles(p.id, selectedProduct === p.id)}`}
-                                                 >
-                                                     <div className="font-bold text-sm mb-1">{p.name}</div>
-                                                     <div className="text-[10px] opacity-70 uppercase">{p.type}</div>
-                                                 </button>
-                                             ))}
-                                         </div>
-                                         {duplicateWarning && (
-                                             <div className="mt-2 bg-red-50 border border-red-200 p-3 rounded flex items-start gap-2">
-                                                 <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
-                                                 <p className="text-xs text-red-700 font-medium"><strong>Duplicate Warning:</strong> This patient received this product recently. Please verify.</p>
-                                             </div>
-                                         )}
-                                     </div>
-
-                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                          <div>
-                                             <div className="flex justify-between mb-1">
-                                                 <label className="block text-xs font-bold text-slate-500 uppercase">Prescriber</label>
-                                                 <button onClick={() => setShowHCPModal(true)} className="text-[10px] font-bold text-blue-600 hover:underline uppercase">+ Add New</button>
-                                             </div>
-                                             <select className="w-full p-3 bg-white border rounded" value={selectedHCP} onChange={e => setSelectedHCP(e.target.value)}>
-                                                 <option value="">-- Select Doctor --</option>
-                                                 {hcps.map(h => <option key={h.id} value={h.id}>{h.full_name} ({h.hospital})</option>)}
-                                             </select>
-                                          </div>
-                                          <div>
-                                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">RX Date (Prescription)</label>
-                                              <input type="date" className="w-full p-3 bg-white border rounded" value={rxDate} onChange={e => setRxDate(e.target.value)} />
-                                          </div>
-                                     </div>
-
-                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                         <div>
-                                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Reported Educator Name</label>
-                                              <input 
-                                                type="text" 
-                                                className="w-full p-3 bg-white border rounded" 
-                                                value={educatorName} 
-                                                onChange={e => setEducatorName(e.target.value)}
-                                                list="educators-list"
-                                                placeholder="e.g. Nurse Joy"
-                                              />
-                                              <datalist id="educators-list">{educatorSuggestions.map((e,i) => <option key={i} value={e} />)}</datalist>
-                                         </div>
-                                         <div>
-                                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Educator Submission Date</label>
-                                              <input type="date" className="w-full p-3 bg-white border rounded" value={educatorDate} onChange={e => setEducatorDate(e.target.value)} />
-                                         </div>
-                                     </div>
-
-                                     <div className="pt-4 border-t border-slate-100 flex gap-3">
-                                         <button onClick={handleCancelDelivery} className="flex-1 py-3 font-bold uppercase text-slate-500 hover:bg-slate-100 rounded">Cancel</button>
-                                         <button onClick={handleSubmitDelivery} disabled={isSubmitting} className="flex-1 bg-[#FFC600] hover:bg-yellow-400 text-black font-bold py-3 uppercase rounded shadow-lg flex items-center justify-center gap-2">
-                                             {isSubmitting ? <Loader2 className="animate-spin w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
-                                             Confirm Delivery
-                                         </button>
-                                     </div>
-                                 </div>
-                             )}
-                        </div>
-                     </div>
-                )}
-
-                {activeTab === 'database' && (
-                    <div className="space-y-4">
-                        <div className="flex flex-wrap gap-2 mb-4 bg-white p-2 rounded shadow-sm border border-slate-200">
-                             {['deliveries', 'hcps', 'locations', 'stock', 'patients'].map(v => (
-                                 <button 
-                                    key={v}
-                                    onClick={() => setDbView(v as DBView)}
-                                    className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-wider transition-all ${dbView === v ? 'bg-black text-[#FFC600]' : 'text-slate-500 hover:bg-slate-50'}`}
-                                 >
-                                     {v}
-                                 </button>
-                             ))}
-                        </div>
-
-                        {renderDatabaseFilters()}
-
-                        <div className="relative mb-4">
-                            <input 
-                                type="text" 
-                                placeholder="Search records..." 
-                                className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg shadow-sm focus:border-[#FFC600] outline-none"
-                                value={searchTerm}
-                                onChange={e => setSearchTerm(e.target.value)}
-                            />
-                            <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        </div>
-
-                        <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left text-sm whitespace-nowrap">
-                                    <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-bold border-b border-slate-200">
-                                        <tr>
-                                            {dbView === 'deliveries' && (
-                                                <>
-                                                    <th className="p-4">Date</th>
-                                                    <th className="p-4">Patient</th>
-                                                    <th className="p-4">Product</th>
-                                                    <th className="p-4">Prescriber</th>
-                                                    <th className="p-4">MR / Owner</th>
-                                                    <th className="p-4 text-right">Actions</th>
-                                                </>
-                                            )}
-                                            {dbView === 'stock' && (
-                                                <>
-                                                    <th className="p-4">Date</th>
-                                                    <th className="p-4">Source / Note</th>
-                                                    <th className="p-4 text-right">Qty</th>
-                                                    <th className="p-4 text-right">Actions</th>
-                                                </>
-                                            )}
-                                            {dbView === 'hcps' && (
-                                                <>
-                                                    <th className="p-4">Name</th>
-                                                    <th className="p-4">Specialty</th>
-                                                    <th className="p-4">Hospital</th>
-                                                    <th className="p-4">Created By</th>
-                                                    <th className="p-4 text-right">Actions</th>
-                                                </>
-                                            )}
-                                            {dbView === 'locations' && (
-                                                <>
-                                                    <th className="p-4">Name</th>
-                                                    <th className="p-4">Type</th>
-                                                    <th className="p-4 text-right">Stock</th>
-                                                    <th className="p-4 text-right">Actions</th>
-                                                </>
-                                            )}
-                                            {dbView === 'patients' && (
-                                                <>
-                                                    <th className="p-4">Name</th>
-                                                    <th className="p-4">National ID</th>
-                                                    <th className="p-4">Phone</th>
-                                                    <th className="p-4">Created By</th>
-                                                    <th className="p-4 text-right">Actions</th>
-                                                </>
-                                            )}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {filterData(
-                                            dbView === 'deliveries' ? deliveries :
-                                            dbView === 'stock' ? stockTransactions :
-                                            dbView === 'hcps' ? hcps :
-                                            dbView === 'locations' ? custodies :
-                                            patients
-                                        ).map((item: any) => (
-                                            <tr key={item.id} className="hover:bg-slate-50">
-                                                {dbView === 'deliveries' && (
-                                                    <>
-                                                        <td className="p-4 text-slate-500 font-mono text-xs">{formatDateFriendly(item.delivery_date)}</td>
-                                                        <td className="p-4 font-bold text-slate-700">{item.patient?.full_name}</td>
-                                                        <td className="p-4"><span className={`text-[10px] font-bold uppercase px-2 py-1 rounded border ${getProductStyles(item.product_id)}`}>{getProductName(item.product_id)}</span></td>
-                                                        <td className="p-4 text-slate-600 text-xs">{item.hcp?.full_name}</td>
-                                                        <td className="p-4 text-slate-600 text-xs">{getOwnerDetails(item.delivered_by).mrName}</td>
-                                                        <td className="p-4 text-right">
-                                                            <button onClick={() => openEditModal('deliveries', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
-                                                            <button onClick={() => handleDeleteItem('deliveries', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
-                                                        </td>
-                                                    </>
-                                                )}
-                                                {dbView === 'stock' && (
-                                                    <>
-                                                        <td className="p-4 text-slate-500 font-mono text-xs">{formatDateFriendly(item.transaction_date)}</td>
-                                                        <td className="p-4 text-slate-700 text-xs max-w-xs truncate" title={item.source}>{resolveSourceText(item.source)}</td>
-                                                        <td className={`p-4 text-right font-mono font-bold ${item.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{item.quantity > 0 ? '+' : ''}{item.quantity}</td>
-                                                        <td className="p-4 text-right flex justify-end gap-2">
-                                                            {item.quantity < 0 && item.source && item.source.startsWith("Transfer to") && (
-                                                                <button onClick={() => handleRetrieveStock(item)} className="text-xs bg-slate-100 hover:bg-[#FFC600] p-1 rounded" title="Retrieve Stock"><Undo2 className="w-4 h-4" /></button>
-                                                            )}
-                                                            <button onClick={() => handleDeleteItem('stock', item.id)} className="text-red-500 hover:text-red-700 p-1"><Trash2 className="w-4 h-4" /></button>
-                                                        </td>
-                                                    </>
-                                                )}
-                                                {dbView === 'hcps' && (
-                                                    <>
-                                                        <td className="p-4 font-bold text-slate-700">{item.full_name}</td>
-                                                        <td className="p-4 text-slate-500 text-xs">{item.specialty}</td>
-                                                        <td className="p-4 text-slate-500 text-xs">{item.hospital}</td>
-                                                        <td className="p-4 text-slate-500 text-xs">{getOwnerDetails(item.created_by).mrName}</td>
-                                                        <td className="p-4 text-right">
-                                                            <button onClick={() => openEditModal('hcps', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
-                                                            <button onClick={() => handleDeleteItem('hcps', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
-                                                        </td>
-                                                    </>
-                                                )}
-                                                {dbView === 'locations' && (
-                                                    <>
-                                                        <td className="p-4 font-bold text-slate-700">{item.name}</td>
-                                                        <td className="p-4"><span className="text-[10px] uppercase font-bold bg-slate-100 px-2 py-1 rounded">{item.type}</span></td>
-                                                        <td className="p-4 text-right font-mono font-bold">{item.current_stock}</td>
-                                                        <td className="p-4 text-right">
-                                                            <button onClick={() => openEditModal('locations', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
-                                                            <button onClick={() => handleDeleteItem('locations', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
-                                                        </td>
-                                                    </>
-                                                )}
-                                                {dbView === 'patients' && (
-                                                    <>
-                                                        <td className="p-4 font-bold text-slate-700">{item.full_name}</td>
-                                                        <td className="p-4 font-mono text-xs text-slate-500">{item.national_id}</td>
-                                                        <td className="p-4 font-mono text-xs text-slate-500">{item.phone_number}</td>
-                                                        <td className="p-4 text-slate-500 text-xs">{getOwnerDetails(item.created_by).mrName}</td>
-                                                        <td className="p-4 text-right">
-                                                            <button onClick={() => openEditModal('patients', item)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil className="w-4 h-4" /></button>
-                                                            <button onClick={() => handleDeleteItem('patients', item.id)} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 className="w-4 h-4" /></button>
-                                                        </td>
-                                                    </>
-                                                )}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                )}
-                
-                {activeTab === 'admin' && isAdmin && (
-                    <AdminPanel profiles={allProfiles} onUpdate={loadData} />
-                )}
             </>
           )}
         </main>
-        
-        {/* Updated Fixed Footer */}
-        <footer className="fixed bottom-0 left-0 w-full bg-slate-900 text-slate-500 text-[10px] flex justify-between items-center px-4 py-2 border-t border-slate-800 z-50 shadow-lg">
-            <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-400">SPIN &copy; {new Date().getFullYear()}</span>
-                <span className="hidden sm:inline opacity-70">Supply & Insulin Pen Network</span>
-            </div>
-            <span className="font-mono opacity-50 font-bold">v{METADATA.version}</span>
-        </footer>
       </div>
       )}
     </div>

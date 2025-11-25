@@ -1,4 +1,5 @@
-const CACHE_NAME = 'spin-v2.0.029';
+
+const CACHE_NAME = 'spin-v2.0.036';
 const ASSETS = [
   '/',
   '/index.html',
