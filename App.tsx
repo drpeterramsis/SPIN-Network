@@ -56,12 +56,11 @@ import {
 } from 'recharts';
 import { ProfileModal } from './components/ProfileModal';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
-import { AIReportModal } from './components/AIReportModal';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.040",
-  version: "2.0.040"
+  name: "S.P.I.N v2.0.041",
+  version: "2.0.041"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -131,44 +130,19 @@ const LandingPage = ({ onLogin }: { onLogin: () => void }) => (
 
 // Footer Component
 const Footer = () => (
-  <footer className="bg-slate-900 text-slate-400 py-8 border-t border-slate-800 shrink-0">
-     <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4">
+  <footer className="bg-slate-900 text-slate-400 py-4 px-4 border-t border-slate-800 shrink-0 z-10 w-full">
+     <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-2">
         <div className="flex items-center gap-2">
             <span className="text-lg">🖊️</span>
             <span className="font-bold text-white tracking-wider">S.P.I.N</span>
             <span className="text-xs bg-slate-800 px-2 py-0.5 rounded text-[#FFC600]">v{METADATA.version}</span>
         </div>
-        <div className="text-xs text-center md:text-right">
-            <p>&copy; {new Date().getFullYear()} Supply Insulin Pen Network. All rights reserved.</p>
-            <p className="mt-1">Restricted Access System. Unauthorized use prohibited.</p>
+        <div className="text-[10px] text-center md:text-right">
+            <p>&copy; {new Date().getFullYear()} Supply Insulin Pen Network.</p>
         </div>
      </div>
   </footer>
 );
-
-// Dashboard Section with Summary Support
-const DashboardSection = ({ title, summary, icon: Icon, children, defaultOpen = false }: { title: string, summary?: React.ReactNode, icon?: any, children?: React.ReactNode, defaultOpen?: boolean }) => {
-    const [isOpen, setIsOpen] = useState(defaultOpen);
-    return (
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-4 transition-all">
-            <button onClick={() => setIsOpen(!isOpen)} className="w-full flex items-center justify-between p-4 bg-slate-50 hover:bg-slate-100 transition-colors">
-                <div className="flex items-center gap-3 font-bold text-slate-800">
-                    {Icon && <Icon className="w-5 h-5 text-[#FFC600]" />}
-                    <span className="uppercase text-xs tracking-wider">{title}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                    {summary && !isOpen && (
-                         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-                             {summary}
-                         </div>
-                    )}
-                    {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                </div>
-            </button>
-            {isOpen && <div className="p-6 border-t border-slate-100 animate-in fade-in slide-in-from-top-2 duration-200">{children}</div>}
-        </div>
-    );
-};
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
@@ -190,7 +164,6 @@ export const App: React.FC = () => {
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
 
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [showAIReportModal, setShowAIReportModal] = useState(false);
   
   // Database Filters
   const [filterDmId, setFilterDmId] = useState<string>('all');
@@ -199,11 +172,6 @@ export const App: React.FC = () => {
   const [hcpSpecialties, setHcpSpecialties] = useState<string[]>([]);
   const [hcpHospitals, setHcpHospitals] = useState<string[]>([]);
 
-  const [editItem, setEditItem] = useState<any>(null);
-  const [editType, setEditType] = useState<DBView | null>(null);
-  const [editDuplicateWarning, setEditDuplicateWarning] = useState(false);
-  const [editPatientDetails, setEditPatientDetails] = useState<{national_id: string, phone_number: string} | null>(null);
-  
   const [searchTerm, setSearchTerm] = useState('');
 
   const [step, setStep] = useState(1);
@@ -220,24 +188,13 @@ export const App: React.FC = () => {
   const [rxDate, setRxDate] = useState('');
   const [educatorName, setEducatorName] = useState('');
   const [educatorSuggestions, setEducatorSuggestions] = useState<string[]>([]);
-  const [educatorDate, setEducatorDate] = useState('');
   
   const [duplicateWarning, setDuplicateWarning] = useState(false);
 
   const [showHCPModal, setShowHCPModal] = useState(false);
   const [newHCP, setNewHCP] = useState({ full_name: '', specialty: '', hospital: '' });
 
-  const [showClinicModal, setShowClinicModal] = useState(false);
-  const [newClinicForm, setNewClinicForm] = useState({ name: '', date: getTodayString(), isPharmacy: false });
-
   const [receiveForm, setReceiveForm] = useState({ quantity: 0, educatorName: '', date: getTodayString() });
-  const [transferForm, setTransferForm] = useState({ 
-      toCustodyId: '', 
-      quantity: 0, 
-      date: getTodayString(),
-      sourceType: 'rep' as 'educator' | 'rep',
-      educatorName: ''
-  });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -281,7 +238,6 @@ export const App: React.FC = () => {
               setAllProfiles([]);
               setUserProfile(null);
               setShowProfileModal(false);
-              setShowAIReportModal(false);
           }
         });
         setAuthLoading(false);
@@ -330,14 +286,10 @@ export const App: React.FC = () => {
       if (currentProf && !currentProf.role) currentProf.role = 'mr';
       setUserProfile(currentProf || null);
 
-      // --- CUSTODY LOGIC IMPROVED ---
       let repC = c.find(x => x.type === 'rep' && x.owner_id === user.id) || null;
-      
-      // Recovery: If no rep custody found linked to me, but there is an "orphaned" one (legacy data issue)
       if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
           const orphan = c.find(x => x.type === 'rep' && x.name === 'My Rep Inventory' && !x.owner_id);
           if (orphan) {
-              // Claim it
               try {
                   await dataService.updateCustody(orphan.id, { owner_id: user.id });
                   repC = { ...orphan, owner_id: user.id };
@@ -345,7 +297,6 @@ export const App: React.FC = () => {
           }
       }
 
-      // If still no custody, create one
       if (!repC && (currentProf?.role === 'mr' || currentProf?.role === 'admin')) {
           try {
               repC = await dataService.ensureRepCustody(user.id);
@@ -413,36 +364,10 @@ export const App: React.FC = () => {
   };
 
   const visibleDeliveries = getVisibleDeliveries();
-
-  const getOwnerDetails = (userId?: string) => {
-      if (!userId) return { mrName: '-', dmName: '-' };
-      if (userId === user.id) return { mrName: 'Me', dmName: '-' };
-      
-      const mr = allProfiles.find(p => p.id === userId);
-      const dm = mr?.manager_id ? allProfiles.find(p => p.id === mr.manager_id) : null;
-      return { 
-          mrName: mr?.full_name || 'Unknown/Deleted', 
-          dmName: dm?.full_name || '-' 
-      };
-  };
-
+  
   const uniquePrescribersCount = useMemo(() => {
       return new Set(visibleDeliveries.map(d => d.hcp_id)).size;
   }, [visibleDeliveries]);
-
-  const topPrescribers = useMemo(() => {
-      const counts: Record<string, number> = {};
-      visibleDeliveries.forEach(d => {
-          counts[d.hcp_id] = (counts[d.hcp_id] || 0) + d.quantity;
-      });
-      return Object.entries(counts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([id, count]) => ({
-              name: hcps.find(h => h.id === id)?.full_name || 'Unknown',
-              count
-          }));
-  }, [visibleDeliveries, hcps]);
 
   const productBreakdown = useMemo(() => {
       const total = visibleDeliveries.length;
@@ -469,9 +394,24 @@ export const App: React.FC = () => {
       }
   }, [step, repCustody, selectedCustody]);
 
+  // Delivery Logic
+  const handleSearchPatient = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!nidSearch) return;
+      
+      const found = await dataService.searchPatient(nidSearch);
+      setHasSearched(true);
+      if (found) {
+          setFoundPatient(found);
+          setStep(2);
+          showToast('Patient record found.', 'success');
+      } else {
+          setFoundPatient(null);
+          showToast('Patient not found. Please register.', 'info');
+      }
+  };
 
   const handleCreatePatient = async () => {
-    // Validate inputs robustly
     if (!newPatientForm.full_name) {
         showToast("Patient name is required", "error");
         return;
@@ -490,9 +430,10 @@ export const App: React.FC = () => {
           created_by: user.id
         });
         setFoundPatient(newP);
+        setStep(2); // Auto advance
         showToast("New patient registered", "success");
     } catch(e: any) {
-        showToast(`Error creating patient: ${e.message || 'Unknown error'}. Try running schema update.`, "error");
+        showToast(`Error creating patient: ${e.message}`, "error");
     } finally {
         setIsSubmitting(false);
     }
@@ -511,13 +452,73 @@ export const App: React.FC = () => {
         setSelectedHCP(created.id); 
         setShowHCPModal(false);
         setNewHCP({ full_name: '', specialty: '', hospital: '' });
-        loadData(); 
         showToast("Doctor registered successfully!", "success");
     } catch (error) {
         showToast("Failed to register doctor.", "error");
     } finally {
         setIsSubmitting(false);
     }
+  };
+
+  // Duplicate Check
+  useEffect(() => {
+      const check = async () => {
+          if (foundPatient && selectedProduct) {
+              const isDup = await dataService.checkDuplicateDelivery(foundPatient.id, selectedProduct);
+              setDuplicateWarning(isDup);
+          }
+      };
+      if (step === 2) check();
+  }, [foundPatient, selectedProduct, step]);
+
+  const handleSubmitDelivery = async (e: React.FormEvent) => {
+      e.preventDefault();
+      
+      if (!foundPatient || !selectedHCP || !selectedProduct) {
+          showToast("Please complete all fields", "error");
+          return;
+      }
+      
+      // Stock Check
+      if (selectedCustody) {
+          const custody = custodies.find(c => c.id === selectedCustody);
+          if (custody && (custody.current_stock || 0) < 1) {
+              showToast("Insufficient stock in selected inventory!", "error");
+              return;
+          }
+      } else {
+          showToast("No inventory source selected", "error");
+          return;
+      }
+
+      setIsSubmitting(true);
+      try {
+          await dataService.logDelivery({
+              patient_id: foundPatient.id,
+              hcp_id: selectedHCP,
+              product_id: selectedProduct,
+              quantity: 1, // Fixed to 1 pen per delivery logic usually, or make adjustable
+              delivered_by: user.id,
+              delivery_date: deliveryDate,
+              rx_date: rxDate || undefined,
+              custody_id: selectedCustody
+          }, user.email);
+          
+          showToast("Delivery logged successfully", "success");
+          
+          // Reset
+          setStep(1);
+          setNidSearch('');
+          setFoundPatient(null);
+          setHasSearched(false);
+          setRxDate('');
+          setDuplicateWarning(false);
+          await loadData();
+      } catch (err: any) {
+          showToast(err.message, "error");
+      } finally {
+          setIsSubmitting(false);
+      }
   };
 
   const handleReceiveStock = async (e: React.FormEvent) => {
@@ -553,52 +554,6 @@ export const App: React.FC = () => {
       } finally {
           setIsSubmitting(false);
       }
-  };
-
-  const getFilteredDatabaseData = (data: any[]) => {
-      const isDM = userProfile?.role === 'dm';
-      const isLM = userProfile?.role === 'lm';
-      
-      if (!isDM && !isLM) return data;
-
-      // Logic to return filtered data for DM/LM views
-      return data;
-  };
-
-  const renderDatabaseFilters = () => {
-      const isDM = userProfile?.role === 'dm';
-      const isLM = userProfile?.role === 'lm';
-      
-      if (!isDM && !isLM) return null;
-
-      const myDMs = isLM ? allProfiles.filter(p => p.role === 'dm' && p.manager_id === user.id) : [];
-      
-      const availableMRs = isLM 
-        ? (filterDmId !== 'all' 
-            ? allProfiles.filter(p => p.role === 'mr' && p.manager_id === filterDmId)
-            : allProfiles.filter(p => p.role === 'mr' && p.manager_id && myDMs.map(d=>d.id).includes(p.manager_id)))
-        : allProfiles.filter(p => p.role === 'mr' && p.manager_id === user.id);
-
-      return (
-          <div className="flex gap-2 items-center bg-slate-50 p-2 rounded border border-slate-200 mb-4 flex-wrap">
-             <div className="flex items-center gap-1 border-r border-slate-200 pr-2 mr-1">
-                <Filter className="w-4 h-4 text-slate-400" />
-                <span className="text-[10px] uppercase font-bold text-slate-500">Filters:</span>
-             </div>
-             
-             {isLM && (
-                 <select value={filterDmId} onChange={e => { setFilterDmId(e.target.value); setFilterMrId('all'); }} className="text-xs border p-1 rounded outline-none focus:border-[#FFC600] bg-white">
-                     <option value="all">All District Managers</option>
-                     {myDMs.map(dm => <option key={dm.id} value={dm.id}>{dm.full_name}</option>)}
-                 </select>
-             )}
-
-             <select value={filterMrId} onChange={e => setFilterMrId(e.target.value)} className="text-xs border p-1 rounded outline-none focus:border-[#FFC600] bg-white">
-                 <option value="all">All Medical Reps</option>
-                 {availableMRs.map(mr => <option key={mr.id} value={mr.id}>{mr.full_name}</option>)}
-             </select>
-          </div>
-      );
   };
 
   if (authLoading) {
@@ -639,13 +594,6 @@ export const App: React.FC = () => {
             }}
         />
 
-        <AIReportModal 
-            isOpen={showAIReportModal}
-            onClose={() => setShowAIReportModal(false)}
-            deliveries={visibleDeliveries}
-            userEmail={user?.email}
-        />
-
         {!user ? (
             <div className="flex-1 overflow-y-auto">
                 <LandingPage onLogin={() => setShowLoginModal(true)} />
@@ -653,7 +601,7 @@ export const App: React.FC = () => {
         ) : (
           <>
              {/* Header */}
-            <header className="bg-black text-white p-4 shadow-lg border-b-4 border-[#FFC600] z-20">
+            <header className="bg-black text-white p-4 shadow-lg border-b-4 border-[#FFC600] z-20 sticky top-0">
                 <div className="max-w-7xl mx-auto flex justify-between items-center">
                     <div className="flex items-center gap-3">
                         <div className="bg-white/10 p-2 rounded-lg">
@@ -692,10 +640,10 @@ export const App: React.FC = () => {
             <main className="flex-1 overflow-hidden flex flex-col relative">
                 
                 {activeTab === 'analytics' && (
-                    <div className="absolute inset-0 z-40 bg-slate-100">
+                    <div className="absolute inset-0 z-40 bg-slate-100 overflow-y-auto">
                         <AnalyticsDashboard 
                             onBack={() => setActiveTab('dashboard')} 
-                            deliveries={deliveries} // Raw data, component handles filtering
+                            deliveries={deliveries} 
                             hcps={hcps}
                             role={userProfile?.role || 'mr'}
                             profiles={allProfiles}
@@ -706,7 +654,7 @@ export const App: React.FC = () => {
 
                 {/* Navigation Tabs */}
                 {userProfile?.access === 'yes' && (
-                    <nav className="bg-white border-b border-slate-200 px-4 shadow-sm overflow-x-auto">
+                    <nav className="bg-white border-b border-slate-200 px-4 shadow-sm overflow-x-auto shrink-0 z-10">
                         <div className="max-w-7xl mx-auto flex space-x-1">
                             {[
                                 { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -784,7 +732,7 @@ export const App: React.FC = () => {
                                             <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200">
                                                 <div className="flex justify-between items-start mb-4">
                                                     <div>
-                                                        <p className="text-xs font-bold text-slate-400 uppercase">Deliveries (Total)</p>
+                                                        <p className="text-xs font-bold text-slate-400 uppercase">Deliveries</p>
                                                         <h3 className="text-2xl font-black text-slate-900 mt-1">{visibleDeliveries.length}</h3>
                                                     </div>
                                                     <div className="bg-blue-100 p-2 rounded text-blue-700">
@@ -794,22 +742,6 @@ export const App: React.FC = () => {
                                                  <p className="text-xs text-slate-500">
                                                     Across {uniquePrescribersCount} prescribers
                                                 </p>
-                                            </div>
-
-                                            <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200 col-span-1 lg:col-span-2 flex items-center justify-between">
-                                                 <div>
-                                                    <h3 className="font-bold text-lg mb-1">AI Assistant</h3>
-                                                    <p className="text-sm text-slate-500 max-w-xs mb-3">Generate insights and reports.</p>
-                                                    <button 
-                                                        onClick={() => setShowAIReportModal(true)}
-                                                        className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded text-xs font-bold uppercase hover:bg-slate-800 transition-colors"
-                                                    >
-                                                        <Sparkles className="w-3 h-3 text-[#FFC600]" /> Open Intelligence
-                                                    </button>
-                                                 </div>
-                                                 <div className="w-24 h-24 bg-gradient-to-br from-slate-100 to-white rounded-full flex items-center justify-center border border-slate-100">
-                                                     <span className="text-4xl">🤖</span>
-                                                 </div>
                                             </div>
                                         </div>
 
@@ -852,7 +784,7 @@ export const App: React.FC = () => {
                                                 </div>
                                             </div>
 
-                                            {/* Quick Actions / Mini Stats */}
+                                            {/* Mini Stats */}
                                             <div className="space-y-6">
                                                 <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
                                                     <h3 className="font-bold text-slate-800 mb-4 text-sm uppercase flex items-center gap-2">
@@ -878,17 +810,6 @@ export const App: React.FC = () => {
                                                             </RechartsPieChart>
                                                         </ResponsiveContainer>
                                                     </div>
-                                                    <div className="space-y-2 mt-2">
-                                                        {productBreakdown.slice(0,3).map((p, i) => (
-                                                            <div key={p.id} className="flex justify-between items-center text-xs">
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="w-2 h-2 rounded-full" style={{background: COLORS[i]}}></div>
-                                                                    <span className="text-slate-600">{p.name}</span>
-                                                                </div>
-                                                                <span className="font-bold">{p.percentage}%</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -903,35 +824,414 @@ export const App: React.FC = () => {
                                     />
                                 )}
 
-                                {/* DELIVER TAB, CUSTODY TAB, DATABASE TAB... (Simplified for brevity, assume full impl) */}
+                                {/* DELIVER TAB - Re-implemented */}
                                 {activeTab === 'deliver' && (
-                                    <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8 text-center text-slate-500">
-                                         <p>Delivery Form Implementation...</p>
-                                         <button onClick={()=>setActiveTab('dashboard')} className="mt-4 text-blue-600 underline">Back</button>
+                                    <div className="max-w-2xl mx-auto animate-in fade-in">
+                                         {/* Step 1: Search */}
+                                         {step === 1 && (
+                                             <div className="bg-white p-8 rounded-lg shadow-sm border border-slate-200 text-center">
+                                                 <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                                                     <Search className="w-8 h-8" />
+                                                 </div>
+                                                 <h3 className="text-xl font-bold text-slate-900 mb-2">Identify Patient</h3>
+                                                 <p className="text-slate-500 mb-6 text-sm">Enter the patient's National ID or Phone to continue.</p>
+                                                 
+                                                 <form onSubmit={handleSearchPatient} className="max-w-md mx-auto relative mb-6">
+                                                     <input 
+                                                         type="text" 
+                                                         placeholder="National ID / Phone Number"
+                                                         className="w-full pl-5 pr-12 py-4 border-2 border-slate-200 rounded-lg text-lg outline-none focus:border-[#FFC600] font-bold tracking-widest"
+                                                         value={nidSearch}
+                                                         onChange={(e) => setNidSearch(e.target.value)}
+                                                         autoFocus
+                                                     />
+                                                     <button type="submit" className="absolute right-2 top-2 bottom-2 bg-black text-white px-4 rounded font-bold uppercase text-sm hover:bg-slate-800 transition-colors">
+                                                         Find
+                                                     </button>
+                                                 </form>
+
+                                                 {hasSearched && !foundPatient && (
+                                                     <div className="bg-slate-50 p-6 rounded-lg border border-slate-200 animate-in zoom-in-95 duration-200">
+                                                         <h4 className="font-bold text-slate-800 mb-4 flex items-center justify-center gap-2">
+                                                             <Plus className="w-4 h-4 text-[#FFC600]" /> Register New Patient
+                                                         </h4>
+                                                         <div className="space-y-4 max-w-sm mx-auto">
+                                                             <input 
+                                                                 type="text" 
+                                                                 placeholder="Full Patient Name"
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-black"
+                                                                 value={newPatientForm.full_name}
+                                                                 onChange={e => setNewPatientForm({...newPatientForm, full_name: e.target.value})}
+                                                             />
+                                                             <input 
+                                                                 type="tel" 
+                                                                 placeholder="Phone Number (Optional)"
+                                                                 className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-black"
+                                                                 value={newPatientForm.phone_number}
+                                                                 onChange={e => setNewPatientForm({...newPatientForm, phone_number: e.target.value})}
+                                                             />
+                                                             <button 
+                                                                 onClick={handleCreatePatient}
+                                                                 disabled={isSubmitting}
+                                                                 className="w-full bg-[#FFC600] text-black font-bold py-3 rounded hover:bg-yellow-400 transition-colors disabled:opacity-50"
+                                                             >
+                                                                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Create & Continue'}
+                                                             </button>
+                                                         </div>
+                                                     </div>
+                                                 )}
+                                             </div>
+                                         )}
+
+                                         {/* Step 2: Form */}
+                                         {step === 2 && foundPatient && (
+                                             <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                                                 <div className="bg-black text-white p-4 flex justify-between items-center">
+                                                     <div className="flex items-center gap-3">
+                                                         <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center font-bold text-lg">
+                                                             {foundPatient.full_name.charAt(0)}
+                                                         </div>
+                                                         <div>
+                                                             <h3 className="font-bold text-lg">{foundPatient.full_name}</h3>
+                                                             <p className="text-xs text-slate-400 font-mono tracking-wider">{foundPatient.national_id}</p>
+                                                         </div>
+                                                     </div>
+                                                     <button onClick={() => { setStep(1); setNidSearch(''); setFoundPatient(null); setHasSearched(false); }} className="text-slate-400 hover:text-white">
+                                                         <X className="w-6 h-6" />
+                                                     </button>
+                                                 </div>
+
+                                                 <form onSubmit={handleSubmitDelivery} className="p-6 md:p-8 space-y-6">
+                                                     {/* Custody Warning */}
+                                                     {myStockLevel < 1 && (
+                                                         <div className="bg-red-50 border-l-4 border-red-500 p-4 text-red-700 text-sm flex items-start gap-3">
+                                                             <AlertTriangle className="w-5 h-5 shrink-0" />
+                                                             <div>
+                                                                 <p className="font-bold">Out of Stock</p>
+                                                                 <p>You have 0 pens in your inventory. You cannot log a delivery.</p>
+                                                             </div>
+                                                         </div>
+                                                     )}
+
+                                                     {/* Duplicate Warning */}
+                                                     {duplicateWarning && (
+                                                         <div className="bg-yellow-50 border-l-4 border-[#FFC600] p-4 text-yellow-800 text-sm flex items-start gap-3 animate-pulse">
+                                                             <AlertTriangle className="w-5 h-5 shrink-0" />
+                                                             <div>
+                                                                 <p className="font-bold">Possible Duplicate</p>
+                                                                 <p>This patient received this product recently. Verify prescription.</p>
+                                                             </div>
+                                                         </div>
+                                                     )}
+
+                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                         <div className="space-y-2">
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Prescribing Doctor</label>
+                                                             <div className="flex gap-2">
+                                                                 <select 
+                                                                     required
+                                                                     className="flex-1 px-4 py-3 border border-slate-300 bg-slate-50 rounded outline-none focus:border-[#FFC600]"
+                                                                     value={selectedHCP}
+                                                                     onChange={e => setSelectedHCP(e.target.value)}
+                                                                 >
+                                                                     <option value="">-- Select HCP --</option>
+                                                                     {hcps.map(h => (
+                                                                         <option key={h.id} value={h.id}>{h.full_name} ({h.hospital})</option>
+                                                                     ))}
+                                                                 </select>
+                                                                 <button 
+                                                                     type="button" 
+                                                                     onClick={() => setShowHCPModal(true)}
+                                                                     className="bg-slate-100 hover:bg-slate-200 p-3 rounded border border-slate-300 text-slate-600"
+                                                                     title="Add New Doctor"
+                                                                 >
+                                                                     <Plus className="w-5 h-5" />
+                                                                 </button>
+                                                             </div>
+                                                         </div>
+
+                                                         <div className="space-y-2">
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Product</label>
+                                                             <select 
+                                                                 required
+                                                                 className="w-full px-4 py-3 border border-slate-300 bg-slate-50 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={selectedProduct}
+                                                                 onChange={e => setSelectedProduct(e.target.value)}
+                                                             >
+                                                                 {PRODUCTS.map(p => (
+                                                                     <option key={p.id} value={p.id}>{p.name}</option>
+                                                                 ))}
+                                                             </select>
+                                                         </div>
+                                                         
+                                                         <div className="space-y-2">
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Date of Delivery</label>
+                                                             <input 
+                                                                 type="date"
+                                                                 required
+                                                                 className="w-full px-4 py-3 border border-slate-300 bg-slate-50 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={deliveryDate}
+                                                                 onChange={e => setDeliveryDate(e.target.value)}
+                                                             />
+                                                         </div>
+
+                                                         <div className="space-y-2">
+                                                             <label className="text-xs font-bold text-slate-500 uppercase">Rx Date (Optional)</label>
+                                                             <input 
+                                                                 type="date"
+                                                                 className="w-full px-4 py-3 border border-slate-300 bg-slate-50 rounded outline-none focus:border-[#FFC600]"
+                                                                 value={rxDate}
+                                                                 onChange={e => setRxDate(e.target.value)}
+                                                             />
+                                                         </div>
+                                                     </div>
+
+                                                     {/* Modal for New HCP */}
+                                                     {showHCPModal && (
+                                                         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                                                             <div className="bg-white p-6 rounded-lg w-full max-w-sm border-t-4 border-[#FFC600]">
+                                                                 <h4 className="font-bold text-lg mb-4">Add New Doctor</h4>
+                                                                 <div className="space-y-3">
+                                                                     <input type="text" placeholder="Dr. Name" className="w-full border p-2 rounded" value={newHCP.full_name} onChange={e => setNewHCP({...newHCP, full_name: e.target.value})} />
+                                                                     <input type="text" placeholder="Hospital/Clinic" className="w-full border p-2 rounded" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} />
+                                                                     <input type="text" placeholder="Specialty" className="w-full border p-2 rounded" value={newHCP.specialty} onChange={e => setNewHCP({...newHCP, specialty: e.target.value})} />
+                                                                     <div className="flex gap-2 pt-2">
+                                                                         <button onClick={() => setShowHCPModal(false)} className="flex-1 bg-slate-100 py-2 rounded font-bold">Cancel</button>
+                                                                         <button onClick={handleCreateHCP} className="flex-1 bg-black text-white py-2 rounded font-bold">Save</button>
+                                                                     </div>
+                                                                 </div>
+                                                             </div>
+                                                         </div>
+                                                     )}
+
+                                                     <button 
+                                                         type="submit"
+                                                         disabled={isSubmitting || myStockLevel < 1}
+                                                         className="w-full bg-[#FFC600] hover:bg-yellow-400 text-black font-black uppercase tracking-widest py-4 rounded shadow-lg transform transition-transform active:scale-95 disabled:opacity-50 disabled:active:scale-100"
+                                                     >
+                                                         {isSubmitting ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : 'Confirm Delivery'}
+                                                     </button>
+                                                 </form>
+                                             </div>
+                                         )}
                                     </div>
                                 )}
                                 
+                                {/* CUSTODY TAB - Re-implemented */}
                                 {activeTab === 'custody' && (
-                                    <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8 text-center text-slate-500">
-                                         <p>Inventory Management Implementation...</p>
-                                         <button onClick={()=>setActiveTab('dashboard')} className="mt-4 text-blue-600 underline">Back</button>
+                                    <div className="space-y-6 animate-in fade-in">
+                                         {/* Top Stats */}
+                                         <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
+                                             <div className="flex items-center gap-4">
+                                                 <div className="w-16 h-16 bg-slate-900 text-[#FFC600] rounded-full flex items-center justify-center">
+                                                     <Package className="w-8 h-8" />
+                                                 </div>
+                                                 <div>
+                                                     <h2 className="text-2xl font-black text-slate-900">MY INVENTORY</h2>
+                                                     <p className="text-slate-500 text-sm">Manage your stock levels</p>
+                                                 </div>
+                                             </div>
+                                             <div className="text-center md:text-right bg-slate-50 px-6 py-4 rounded border border-slate-100">
+                                                 <span className="block text-4xl font-black text-slate-900">{myStockLevel}</span>
+                                                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pens On Hand</span>
+                                             </div>
+                                         </div>
+
+                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                             {/* Receive Form */}
+                                             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                                                 <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
+                                                     Receive Stock
+                                                 </h3>
+                                                 <form onSubmit={handleReceiveStock} className="space-y-4">
+                                                     <div>
+                                                         <label className="text-xs font-bold text-slate-500 uppercase">Quantity Received</label>
+                                                         <input 
+                                                             type="number" 
+                                                             min="1"
+                                                             required
+                                                             className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                             value={receiveForm.quantity}
+                                                             onChange={e => setReceiveForm({...receiveForm, quantity: Number(e.target.value)})}
+                                                         />
+                                                     </div>
+                                                     <div>
+                                                         <label className="text-xs font-bold text-slate-500 uppercase">Educator Name (Source)</label>
+                                                         <input 
+                                                             type="text" 
+                                                             list="educators"
+                                                             required
+                                                             className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                             value={receiveForm.educatorName}
+                                                             onChange={e => setReceiveForm({...receiveForm, educatorName: e.target.value})}
+                                                             placeholder="e.g. Nurse Joy"
+                                                         />
+                                                         <datalist id="educators">
+                                                             {educatorSuggestions.map(s => <option key={s} value={s} />)}
+                                                         </datalist>
+                                                     </div>
+                                                     <div>
+                                                         <label className="text-xs font-bold text-slate-500 uppercase">Date</label>
+                                                         <input 
+                                                             type="date" 
+                                                             required
+                                                             className="w-full px-4 py-2 border border-slate-300 rounded outline-none focus:border-[#FFC600]"
+                                                             value={receiveForm.date}
+                                                             onChange={e => setReceiveForm({...receiveForm, date: e.target.value})}
+                                                         />
+                                                     </div>
+                                                     <button 
+                                                         type="submit"
+                                                         disabled={isSubmitting}
+                                                         className="w-full bg-black text-white font-bold py-3 rounded hover:bg-slate-800 transition-colors uppercase text-sm tracking-wide"
+                                                     >
+                                                         {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Log Receipt'}
+                                                     </button>
+                                                 </form>
+                                             </div>
+
+                                             {/* Recent Transactions */}
+                                             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col">
+                                                 <h3 className="font-bold text-slate-900 uppercase text-sm mb-4 border-b border-slate-100 pb-2">
+                                                     Stock History
+                                                 </h3>
+                                                 <div className="flex-1 overflow-y-auto max-h-[300px] space-y-3">
+                                                     {stockTransactions.filter(t => t.custody_id === repCustody?.id).map(tx => (
+                                                         <div key={tx.id} className="flex justify-between items-center text-sm p-3 bg-slate-50 rounded border border-slate-100">
+                                                             <div>
+                                                                 <span className={`font-bold ${tx.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                     {tx.quantity > 0 ? '+' : ''}{tx.quantity}
+                                                                 </span>
+                                                                 <span className="text-slate-500 ml-2">{formatDateFriendly(tx.transaction_date)}</span>
+                                                             </div>
+                                                             <div className="text-xs text-slate-400 max-w-[150px] truncate" title={tx.source}>
+                                                                 {tx.source}
+                                                             </div>
+                                                         </div>
+                                                     ))}
+                                                     {stockTransactions.filter(t => t.custody_id === repCustody?.id).length === 0 && (
+                                                         <p className="text-center text-slate-400 py-4 text-xs">No transactions found.</p>
+                                                     )}
+                                                 </div>
+                                             </div>
+                                         </div>
                                     </div>
                                 )}
 
+                                {/* DATABASE TAB - Re-implemented */}
                                 {activeTab === 'database' && (
-                                    <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8 text-center text-slate-500">
-                                         <p>Database View Implementation...</p>
-                                         <button onClick={()=>setActiveTab('dashboard')} className="mt-4 text-blue-600 underline">Back</button>
+                                    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
+                                         <div className="bg-slate-50 p-4 border-b border-slate-200 flex flex-wrap gap-4 items-center justify-between">
+                                             <div className="flex gap-2">
+                                                 {(['deliveries', 'patients', 'hcps'] as DBView[]).map(view => (
+                                                     <button
+                                                         key={view}
+                                                         onClick={() => setDbView(view)}
+                                                         className={`px-4 py-2 text-xs font-bold uppercase rounded-full border transition-colors ${dbView === view ? 'bg-black text-white border-black' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+                                                     >
+                                                         {view}
+                                                     </button>
+                                                 ))}
+                                             </div>
+                                             
+                                             <div className="relative">
+                                                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                 <input 
+                                                     type="text" 
+                                                     placeholder="Search records..." 
+                                                     value={searchTerm}
+                                                     onChange={e => setSearchTerm(e.target.value)}
+                                                     className="pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-full outline-none focus:border-[#FFC600] w-64"
+                                                 />
+                                             </div>
+                                         </div>
+
+                                         <div className="overflow-x-auto">
+                                             <table className="w-full text-left text-sm">
+                                                 <thead className="bg-slate-100 text-slate-500 uppercase text-xs font-bold border-b border-slate-200">
+                                                     <tr>
+                                                         {dbView === 'deliveries' && (
+                                                             <>
+                                                                 <th className="px-6 py-3">Date</th>
+                                                                 <th className="px-6 py-3">Patient</th>
+                                                                 <th className="px-6 py-3">Product</th>
+                                                                 <th className="px-6 py-3">Qty</th>
+                                                                 <th className="px-6 py-3">Prescriber</th>
+                                                             </>
+                                                         )}
+                                                         {dbView === 'patients' && (
+                                                             <>
+                                                                 <th className="px-6 py-3">Name</th>
+                                                                 <th className="px-6 py-3">National ID</th>
+                                                                 <th className="px-6 py-3">Phone</th>
+                                                             </>
+                                                         )}
+                                                         {dbView === 'hcps' && (
+                                                             <>
+                                                                 <th className="px-6 py-3">Doctor Name</th>
+                                                                 <th className="px-6 py-3">Hospital</th>
+                                                                 <th className="px-6 py-3">Specialty</th>
+                                                             </>
+                                                         )}
+                                                     </tr>
+                                                 </thead>
+                                                 <tbody className="divide-y divide-slate-100">
+                                                     {dbView === 'deliveries' && visibleDeliveries
+                                                         .filter(d => 
+                                                             (d.patient?.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                                             (d.hcp?.full_name || '').toLowerCase().includes(searchTerm.toLowerCase())
+                                                         )
+                                                         .map(d => (
+                                                             <tr key={d.id} className="hover:bg-slate-50">
+                                                                 <td className="px-6 py-3 font-mono text-xs">{formatDateFriendly(d.delivery_date)}</td>
+                                                                 <td className="px-6 py-3 font-bold">{d.patient?.full_name}</td>
+                                                                 <td className="px-6 py-3">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
+                                                                 <td className="px-6 py-3 font-bold">{d.quantity}</td>
+                                                                 <td className="px-6 py-3 text-slate-500">{d.hcp?.full_name}</td>
+                                                             </tr>
+                                                         ))
+                                                     }
+                                                     {dbView === 'patients' && patients
+                                                         .filter(p => p.full_name.toLowerCase().includes(searchTerm.toLowerCase()))
+                                                         .map(p => (
+                                                             <tr key={p.id} className="hover:bg-slate-50">
+                                                                 <td className="px-6 py-3 font-bold">{p.full_name}</td>
+                                                                 <td className="px-6 py-3 font-mono text-slate-500">{p.national_id}</td>
+                                                                 <td className="px-6 py-3 text-slate-500">{p.phone_number}</td>
+                                                             </tr>
+                                                         ))
+                                                     }
+                                                     {dbView === 'hcps' && hcps
+                                                         .filter(h => h.full_name.toLowerCase().includes(searchTerm.toLowerCase()))
+                                                         .map(h => (
+                                                             <tr key={h.id} className="hover:bg-slate-50">
+                                                                 <td className="px-6 py-3 font-bold">{h.full_name}</td>
+                                                                 <td className="px-6 py-3">{h.hospital}</td>
+                                                                 <td className="px-6 py-3 text-slate-500">{h.specialty}</td>
+                                                             </tr>
+                                                         ))
+                                                     }
+                                                 </tbody>
+                                             </table>
+                                             {/* Empty States */}
+                                             {(
+                                                 (dbView === 'deliveries' && visibleDeliveries.length === 0) ||
+                                                 (dbView === 'patients' && patients.length === 0) ||
+                                                 (dbView === 'hcps' && hcps.length === 0)
+                                             ) && (
+                                                 <div className="p-12 text-center text-slate-400 text-sm">No records found.</div>
+                                             )}
+                                         </div>
                                     </div>
                                 )}
                             </>
                         )}
                         
                     </div>
-                    
-                    {/* Always show footer at bottom of content */}
-                    <Footer />
                 </div>
+                
+                {/* Footer placed outside scroll area */}
+                <Footer />
             </main>
           </>
         )}
