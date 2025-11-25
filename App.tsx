@@ -28,7 +28,8 @@ import {
   Pencil,
   Info,
   Truck,
-  MapPin
+  MapPin,
+  Filter
 } from 'lucide-react';
 import { 
   PieChart as RechartsPieChart, 
@@ -42,8 +43,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.050",
-  version: "2.0.050"
+  name: "S.P.I.N v2.0.051",
+  version: "2.0.051"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -148,6 +149,10 @@ export const App: React.FC = () => {
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([]);
   const [repCustody, setRepCustody] = useState<Custody | null>(null);
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
+
+  // Database Filters
+  const [dbFilterDm, setDbFilterDm] = useState('all');
+  const [dbFilterMr, setDbFilterMr] = useState('all');
 
   const [showProfileModal, setShowProfileModal] = useState(false);
   
@@ -334,6 +339,28 @@ export const App: React.FC = () => {
       };
   }, [allProfiles]);
 
+  // DB Filter Lists
+  const dbDms = useMemo(() => {
+      if (userProfile?.role === 'lm') {
+          return allProfiles.filter(p => p.role === 'dm' && p.manager_id === user.id);
+      }
+      return [];
+  }, [userProfile, allProfiles, user]);
+
+  const dbMrs = useMemo(() => {
+      if (userProfile?.role === 'dm') {
+          return allProfiles.filter(p => p.role === 'mr' && p.manager_id === user.id);
+      }
+      if (userProfile?.role === 'lm') {
+          if (dbFilterDm !== 'all') {
+              return allProfiles.filter(p => p.role === 'mr' && p.manager_id === dbFilterDm);
+          }
+          const myDmIds = dbDms.map(d => d.id);
+          return allProfiles.filter(p => p.role === 'mr' && p.manager_id && myDmIds.includes(p.manager_id));
+      }
+      return [];
+  }, [userProfile, allProfiles, user, dbFilterDm, dbDms]);
+
   // Manager View Calculations
   const managerStockData = useMemo(() => {
     if (!userProfile || (userProfile.role !== 'dm' && userProfile.role !== 'lm')) return [];
@@ -407,6 +434,24 @@ export const App: React.FC = () => {
 
   const visibleDeliveries = getVisibleDeliveries();
   
+  // Filtered Deliveries for Database View
+  const filteredDbDeliveries = useMemo(() => {
+      let data = visibleDeliveries;
+      
+      if (activeTab === 'database' && dbView === 'deliveries') {
+          if (dbFilterDm !== 'all' && userProfile?.role === 'lm') {
+              data = data.filter(d => {
+                  const owner = allProfiles.find(p => p.id === d.delivered_by);
+                  return owner?.manager_id === dbFilterDm;
+              });
+          }
+          if (dbFilterMr !== 'all' && (userProfile?.role === 'dm' || userProfile?.role === 'lm')) {
+              data = data.filter(d => d.delivered_by === dbFilterMr);
+          }
+      }
+      return data;
+  }, [visibleDeliveries, dbFilterDm, dbFilterMr, activeTab, dbView, userProfile, allProfiles]);
+
   const uniquePrescribersCount = useMemo(() => {
       return new Set(visibleDeliveries.map(d => d.hcp_id)).size;
   }, [visibleDeliveries]);
@@ -1167,8 +1212,7 @@ export const App: React.FC = () => {
                                 {/* DELIVER TAB */}
                                 {activeTab === 'deliver' && (userProfile?.role === 'mr' || userProfile?.role === 'admin') && (
                                     <div className="max-w-2xl mx-auto animate-in fade-in">
-                                         
-                                         {/* Step Indicator */}
+                                         {/* ... Step Indicator ... (unchanged) */}
                                          <div className="flex items-center justify-between mb-8 px-8">
                                             <div className={`flex flex-col items-center gap-2 z-10 ${step >= 1 ? 'opacity-100' : 'opacity-50'}`}>
                                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border-2 transition-all ${step >= 1 ? 'bg-black text-white border-black' : 'bg-white text-slate-300 border-slate-200'}`}>1</div>
@@ -1449,7 +1493,7 @@ export const App: React.FC = () => {
                                 {/* CUSTODY TAB */}
                                 {activeTab === 'custody' && (
                                     <div className="space-y-6 animate-in fade-in">
-                                         {/* Header */}
+                                         {/* ... unchanged ... */}
                                          <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
                                              <div className="flex items-center gap-4">
                                                  <div className="w-16 h-16 bg-slate-900 text-[#FFC600] rounded-full flex items-center justify-center">
@@ -1575,22 +1619,51 @@ export const App: React.FC = () => {
                                 {/* DATABASE TAB */}
                                 {activeTab === 'database' && (
                                     <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
-                                        <div className="bg-slate-50 border-b border-slate-200 p-2 overflow-x-auto flex gap-2">
-                                            {[
-                                                { id: 'deliveries', label: 'Deliveries' },
-                                                { id: 'hcps', label: 'Doctors' },
-                                                { id: 'patients', label: 'Patients' },
-                                                { id: 'locations', label: 'Locations' },
-                                                { id: 'stock', label: 'Stock Logs' }
-                                            ].map(view => (
-                                                <button
-                                                    key={view.id}
-                                                    onClick={() => setDbView(view.id as DBView)}
-                                                    className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === view.id ? 'bg-black text-white' : 'text-slate-500 hover:bg-slate-200'}`}
-                                                >
-                                                    {view.label}
-                                                </button>
-                                            ))}
+                                        <div className="bg-slate-50 border-b border-slate-200 p-2 overflow-x-auto flex gap-2 items-center justify-between">
+                                            <div className="flex gap-2">
+                                                {[
+                                                    { id: 'deliveries', label: 'Deliveries' },
+                                                    { id: 'hcps', label: 'Doctors' },
+                                                    { id: 'patients', label: 'Patients' },
+                                                    { id: 'locations', label: 'Locations' },
+                                                    { id: 'stock', label: 'Stock Logs' }
+                                                ].map(view => (
+                                                    <button
+                                                        key={view.id}
+                                                        onClick={() => setDbView(view.id as DBView)}
+                                                        className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === view.id ? 'bg-black text-white' : 'text-slate-500 hover:bg-slate-200'}`}
+                                                    >
+                                                        {view.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            
+                                            {/* Hierarchy Filters for Managers */}
+                                            {dbView === 'deliveries' && (userProfile?.role === 'lm' || userProfile?.role === 'dm') && (
+                                                <div className="flex gap-2 items-center">
+                                                    <Filter className="w-4 h-4 text-slate-400" />
+                                                    
+                                                    {userProfile.role === 'lm' && (
+                                                        <select 
+                                                            value={dbFilterDm} 
+                                                            onChange={(e) => { setDbFilterDm(e.target.value); setDbFilterMr('all'); }}
+                                                            className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
+                                                        >
+                                                            <option value="all">All DMs</option>
+                                                            {dbDms.map(dm => <option key={dm.id} value={dm.id}>{dm.full_name}</option>)}
+                                                        </select>
+                                                    )}
+
+                                                    <select 
+                                                        value={dbFilterMr} 
+                                                        onChange={(e) => setDbFilterMr(e.target.value)}
+                                                        className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
+                                                    >
+                                                        <option value="all">All MRs</option>
+                                                        {dbMrs.map(mr => <option key={mr.id} value={mr.id}>{mr.full_name}</option>)}
+                                                    </select>
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="overflow-x-auto">
@@ -1599,13 +1672,17 @@ export const App: React.FC = () => {
                                                     <tr>
                                                         {dbView === 'deliveries' && (
                                                             <>
-                                                                <th className="px-6 py-4">Date</th>
-                                                                <th className="px-6 py-4">Patient</th>
-                                                                <th className="px-6 py-4">HCP</th>
-                                                                <th className="px-6 py-4">Location</th>
-                                                                <th className="px-6 py-4">Qty</th>
-                                                                <th className="px-6 py-4">Product</th>
-                                                                <th className="px-6 py-4 text-right">Actions</th>
+                                                                <th className="px-4 py-4">Date</th>
+                                                                <th className="px-4 py-4">Patient</th>
+                                                                <th className="px-4 py-4">HCP</th>
+                                                                <th className="px-4 py-4">Location</th>
+                                                                <th className="px-4 py-4">Qty</th>
+                                                                <th className="px-4 py-4">Product</th>
+                                                                {/* Extended Columns */}
+                                                                <th className="px-4 py-4">Rx Date</th>
+                                                                <th className="px-4 py-4">Educator</th>
+                                                                <th className="px-4 py-4">Info Date</th>
+                                                                <th className="px-4 py-4 text-right">Actions</th>
                                                             </>
                                                         )}
                                                         {dbView === 'hcps' && (
@@ -1644,15 +1721,21 @@ export const App: React.FC = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100 text-sm">
-                                                    {dbView === 'deliveries' && visibleDeliveries.map(d => (
+                                                    {dbView === 'deliveries' && filteredDbDeliveries.map(d => (
                                                         <tr key={d.id} className="hover:bg-slate-50">
-                                                            <td className="px-6 py-4 text-slate-500 font-mono text-xs">{formatDateFriendly(d.delivery_date)}</td>
-                                                            <td className="px-6 py-4 font-bold">{d.patient?.full_name}</td>
-                                                            <td className="px-6 py-4">{d.hcp?.full_name}</td>
-                                                            <td className="px-6 py-4 text-slate-600">{d.custody?.name || 'Unknown'}</td>
-                                                            <td className="px-6 py-4 font-bold">{d.quantity}</td>
-                                                            <td className="px-6 py-4 text-xs uppercase">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
-                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                            <td className="px-4 py-4 text-slate-500 font-mono text-xs whitespace-nowrap">{formatDateFriendly(d.delivery_date)}</td>
+                                                            <td className="px-4 py-4 font-bold">{d.patient?.full_name}</td>
+                                                            <td className="px-4 py-4">{d.hcp?.full_name}</td>
+                                                            <td className="px-4 py-4 text-slate-600 text-xs">{d.custody?.name || 'Unknown'}</td>
+                                                            <td className="px-4 py-4 font-bold">{d.quantity}</td>
+                                                            <td className="px-4 py-4 text-xs uppercase">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
+                                                            
+                                                            {/* New Data Columns */}
+                                                            <td className="px-4 py-4 text-xs text-slate-500 whitespace-nowrap">{d.rx_date ? formatDateFriendly(d.rx_date) : '-'}</td>
+                                                            <td className="px-4 py-4 text-xs text-slate-500">{d.educator_name || '-'}</td>
+                                                            <td className="px-4 py-4 text-xs text-slate-500 whitespace-nowrap">{d.educator_submission_date ? formatDateFriendly(d.educator_submission_date) : '-'}</td>
+                                                            
+                                                            <td className="px-4 py-4 text-right flex justify-end gap-2">
                                                                 <button onClick={() => openEditModal(d, 'deliveries')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
                                                                 <button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
                                                             </td>
@@ -1662,7 +1745,11 @@ export const App: React.FC = () => {
                                                         <tr key={h.id} className="hover:bg-slate-50">
                                                             <td className="px-6 py-4 font-bold">{h.full_name}</td>
                                                             <td className="px-6 py-4">{h.hospital}</td>
-                                                            <td className="px-6 py-4 text-xs bg-slate-100 rounded inline-block px-2 py-1 my-3">{h.specialty}</td>
+                                                            <td className="px-6 py-4">
+                                                                <span className="text-xs bg-slate-100 rounded px-2 py-1 font-medium border border-slate-200 text-slate-600">
+                                                                    {h.specialty}
+                                                                </span>
+                                                            </td>
                                                             <td className="px-6 py-4 text-right flex justify-end gap-2">
                                                                 <button onClick={() => openEditModal(h, 'hcps')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
                                                                 <button onClick={() => handleDeleteItem('hcps', h.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>

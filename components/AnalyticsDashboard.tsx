@@ -1,7 +1,6 @@
-
 import React, { useState, useMemo } from 'react';
 import { Delivery, HCP, PRODUCTS, UserProfile } from '../types';
-import { Filter, Calendar, BarChart3, PieChart, TrendingUp, ArrowLeft, Users } from 'lucide-react';
+import { Filter, Calendar, BarChart3, PieChart, TrendingUp, ArrowLeft, Users, Network } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
   Pie, Cell, PieChart as RechartsPieChart 
@@ -166,6 +165,41 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
     return Object.values(grouped).sort((a: any, b: any) => a.date.localeCompare(b.date));
   }, [filteredData]);
 
+  // 4. Team Performance (for Managers)
+  const teamPerformanceData = useMemo(() => {
+      if (role === 'mr') return [];
+
+      const dataPoints: Record<string, number> = {};
+      
+      filteredData.forEach(d => {
+          const owner = profiles.find(p => p.id === d.delivered_by);
+          if (!owner) return;
+
+          let key = 'Unknown';
+          
+          if (role === 'dm') {
+              key = owner.full_name; // Breakdown by MR
+          } else if (role === 'lm') {
+              if (selectedDm !== 'all') {
+                  key = owner.full_name; // Breakdown by MR (under specific DM)
+              } else {
+                  // Breakdown by DM
+                  const manager = profiles.find(p => p.id === owner.manager_id);
+                  key = manager?.full_name || 'Unassigned';
+              }
+          } else if (role === 'admin') {
+              // Admin sees Breakdown by LM or DM if no LM? simplified to DM for now
+               const manager = profiles.find(p => p.id === owner.manager_id);
+               key = manager?.full_name || owner.full_name;
+          }
+          dataPoints[key] = (dataPoints[key] || 0) + d.quantity;
+      });
+
+      return Object.entries(dataPoints)
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value);
+  }, [filteredData, role, profiles, selectedDm]);
+
   const CustomPieTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload;
@@ -301,6 +335,30 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onBack, 
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                 
+                {/* Team Performance Chart (Only for Managers/Admins) */}
+                {(role === 'dm' || role === 'lm' || role === 'admin') && (
+                     <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 lg:col-span-2">
+                        <h4 className="text-sm font-bold text-slate-900 uppercase mb-6 flex items-center gap-2">
+                            <Network className="w-4 h-4 text-[#FFC600]" /> 
+                            {role === 'lm' && selectedDm === 'all' ? 'Line Performance (By District)' : 'Team Performance (By Rep)'}
+                        </h4>
+                        <div className="h-[250px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={teamPerformanceData}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                                    <Tooltip 
+                                        contentStyle={{backgroundColor: '#000', border: 'none', borderRadius: '4px', color: '#fff', fontSize: '11px'}}
+                                        cursor={{fill: 'rgba(0,0,0,0.05)'}}
+                                    />
+                                    <Bar dataKey="value" name="Pens" fill="#0f172a" radius={[4, 4, 0, 0]} barSize={40} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                )}
+
                 {/* Monthly Trend Stacked Bar */}
                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
                     <h4 className="text-sm font-bold text-slate-900 uppercase mb-6 flex items-center gap-2">
