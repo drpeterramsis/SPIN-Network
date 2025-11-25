@@ -1,6 +1,7 @@
+
 import React, { useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { X, User, Shield, Trash2, Loader2 } from 'lucide-react';
+import { X, User, Shield, Trash2, Loader2, LogOut } from 'lucide-react';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -115,9 +116,18 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, use
                     </div>
 
                     {/* ACTIONS */}
-                    <div className="pt-4 border-t border-slate-100">
-                        <h5 className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-2">
-                            <Shield className="w-3 h-3" /> Account Security
+                    <div className="pt-4 border-t border-slate-100 space-y-3">
+                        
+                        <button 
+                            onClick={onLogout}
+                            className="w-full flex items-center justify-center gap-2 bg-black text-white hover:bg-slate-800 py-3 font-bold text-sm uppercase tracking-wide transition-all shadow-md"
+                        >
+                            <LogOut className="w-4 h-4" />
+                            Sign Out securely
+                        </button>
+
+                        <h5 className="text-xs font-bold text-slate-400 uppercase mt-4 mb-2 flex items-center gap-2">
+                            <Shield className="w-3 h-3" /> Danger Zone
                         </h5>
                         
                         {error && (
@@ -134,9 +144,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, use
                             {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                             Delete Account
                         </button>
-                        <p className="text-[10px] text-slate-400 mt-2 text-center">
-                            This action will remove your profile and login credentials.
-                        </p>
                     </div>
 
                 </div>

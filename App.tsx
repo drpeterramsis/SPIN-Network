@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Auth } from './components/Auth';
 import { AdminPanel } from './components/AdminPanel';
@@ -59,8 +60,8 @@ import { AIReportModal } from './components/AIReportModal';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.039",
-  version: "2.0.039"
+  name: "S.P.I.N v2.0.040",
+  version: "2.0.040"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
