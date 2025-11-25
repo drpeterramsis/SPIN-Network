@@ -209,129 +209,128 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
         </button>
 
         {/* Header */}
-        <div className="bg-black p-8 text-center relative overflow-hidden">
-          <div className="mx-auto w-16 h-16 mb-4 relative flex items-center justify-center">
+        <div className="bg-black p-6 text-center relative overflow-hidden">
+          <div className="mx-auto w-12 h-12 mb-2 relative flex items-center justify-center">
              <div className="absolute inset-0 bg-[#FFC600] blur-xl opacity-20 rounded-full"></div>
-             <span className="text-5xl relative z-10 drop-shadow-lg">🖊️</span>
+             <span className="text-4xl relative z-10 drop-shadow-lg">🖊️</span>
           </div>
-          <h2 className="text-3xl font-black text-white tracking-tighter">SPIN ACCESS</h2>
-          <p className="text-[#FFC600] mt-2 text-xs font-bold tracking-widest uppercase">
+          <h2 className="text-2xl font-black text-white tracking-tighter">SPIN ACCESS</h2>
+          <p className="text-[#FFC600] mt-1 text-[10px] font-bold tracking-widest uppercase">
             {isSignUp ? 'Staff Registration' : 'Authorized Personnel Only'}
           </p>
         </div>
 
-        <div className="p-8">
+        <div className="p-6">
             {!isSupabaseConfigured() && (
-                <div className="mb-6 bg-yellow-50 border border-yellow-200 p-3 flex items-start gap-3 text-yellow-800 text-sm">
-                    <AlertCircle className="w-5 h-5 shrink-0" />
+                <div className="mb-4 bg-yellow-50 border border-yellow-200 p-2 flex items-start gap-2 text-yellow-800 text-xs">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
                     <p><strong>Demo Mode:</strong> Database not connected.</p>
                 </div>
             )}
 
             {successMsg && (
-                 <div className="mb-6 bg-green-50 border border-green-200 p-3 flex items-start gap-3 text-green-800 text-sm">
-                    <CheckCircle2 className="w-5 h-5 shrink-0" />
+                 <div className="mb-4 bg-green-50 border border-green-200 p-2 flex items-start gap-2 text-green-800 text-xs">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
                     <p>{successMsg}</p>
                 </div>
             )}
 
-          <form onSubmit={handleAuth} className="space-y-5">
-            
-            {isSignUp && (
-                <>
-                    <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Full Name</label>
-                    <input
-                        type="text"
-                        required
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        className="w-full px-4 py-3 border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium"
-                        placeholder="John Doe"
-                    />
-                    </div>
-                    <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Employee ID</label>
-                    <input
-                        type="text"
-                        required
-                        value={employeeId}
-                        onChange={(e) => setEmployeeId(e.target.value)}
-                        className="w-full px-4 py-3 border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium"
-                        placeholder="EMP-12345"
-                    />
-                    </div>
-                    
-                    {email !== 'admin@spin.com' && (
+          <form onSubmit={handleAuth}>
+            {/* Scrollable Container for Form Fields */}
+            <div className={`space-y-4 ${isSignUp ? 'max-h-[50vh] overflow-y-auto custom-scrollbar pr-2 mb-4' : 'mb-4'}`}>
+                {isSignUp && (
+                    <>
                         <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Role</label>
-                        <div className="grid grid-cols-1 gap-2">
-                            <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'mr' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                                <input type="radio" name="role" value="mr" checked={role === 'mr'} onChange={() => setRole('mr')} className="accent-black w-4 h-4" />
-                                <div className="flex-1">
-                                    <span className="block text-sm font-bold text-slate-900">Medical Representative (MR)</span>
-                                    <span className="text-xs text-slate-500">Distribution & Delivery</span>
-                                </div>
-                                <Briefcase className="w-4 h-4 text-slate-400" />
-                            </label>
-                            <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'dm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                                <input type="radio" name="role" value="dm" checked={role === 'dm'} onChange={() => setRole('dm')} className="accent-black w-4 h-4" />
-                                <div className="flex-1">
-                                    <span className="block text-sm font-bold text-slate-900">District Manager (DM)</span>
-                                    <span className="text-xs text-slate-500">Manages MR Team</span>
-                                </div>
-                                <User className="w-4 h-4 text-slate-400" />
-                            </label>
-                             <label className={`flex items-center gap-3 p-3 border cursor-pointer transition-all ${role === 'lm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                                <input type="radio" name="role" value="lm" checked={role === 'lm'} onChange={() => setRole('lm')} className="accent-black w-4 h-4" />
-                                <div className="flex-1">
-                                    <span className="block text-sm font-bold text-slate-900">Line Manager (LM)</span>
-                                    <span className="text-xs text-slate-500">Regional Oversight</span>
-                                </div>
-                                <Network className="w-4 h-4 text-slate-400" />
-                            </label>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Full Name</label>
+                            <input
+                                type="text"
+                                required
+                                value={fullName}
+                                onChange={(e) => setFullName(e.target.value)}
+                                className="w-full px-3 py-2 text-sm border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium"
+                                placeholder="John Doe"
+                            />
                         </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Employee ID</label>
+                            <input
+                                type="text"
+                                required
+                                value={employeeId}
+                                onChange={(e) => setEmployeeId(e.target.value)}
+                                className="w-full px-3 py-2 text-sm border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium"
+                                placeholder="EMP-12345"
+                            />
                         </div>
-                    )}
-                </>
-            )}
+                        
+                        {email !== 'admin@spin.com' && (
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-2">Select Role</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    <label className={`flex items-center gap-3 p-2 border cursor-pointer transition-all ${role === 'mr' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                        <input type="radio" name="role" value="mr" checked={role === 'mr'} onChange={() => setRole('mr')} className="accent-black w-3 h-3" />
+                                        <div className="flex-1">
+                                            <span className="block text-xs font-bold text-slate-900">Medical Representative (MR)</span>
+                                        </div>
+                                        <Briefcase className="w-3 h-3 text-slate-400" />
+                                    </label>
+                                    <label className={`flex items-center gap-3 p-2 border cursor-pointer transition-all ${role === 'dm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                        <input type="radio" name="role" value="dm" checked={role === 'dm'} onChange={() => setRole('dm')} className="accent-black w-3 h-3" />
+                                        <div className="flex-1">
+                                            <span className="block text-xs font-bold text-slate-900">District Manager (DM)</span>
+                                        </div>
+                                        <User className="w-3 h-3 text-slate-400" />
+                                    </label>
+                                    <label className={`flex items-center gap-3 p-2 border cursor-pointer transition-all ${role === 'lm' ? 'border-[#FFC600] bg-yellow-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                        <input type="radio" name="role" value="lm" checked={role === 'lm'} onChange={() => setRole('lm')} className="accent-black w-3 h-3" />
+                                        <div className="flex-1">
+                                            <span className="block text-xs font-bold text-slate-900">Line Manager (LM)</span>
+                                        </div>
+                                        <Network className="w-3 h-3 text-slate-400" />
+                                    </label>
+                                </div>
+                            </div>
+                        )}
+                    </>
+                )}
 
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Corporate Email</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium"
-                placeholder="user@spin.com"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
-              <div className="relative">
+                <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Corporate Email</label>
                 <input
-                    type={showPassword ? "text" : "password"}
+                    type="email"
                     required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium pr-12"
-                    placeholder="••••••••"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium"
+                    placeholder="user@spin.com"
                 />
-                <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
-                    tabIndex={-1}
-                >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
+                </div>
+                
+                <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Password</label>
+                <div className="relative">
+                    <input
+                        type={showPassword ? "text" : "password"}
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#FFC600] outline-none transition-all font-medium pr-10"
+                        placeholder="••••••••"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                        tabIndex={-1}
+                    >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                </div>
+                </div>
             </div>
 
             {error && (
-              <div className="text-red-600 text-xs bg-red-50 p-3 border-l-4 border-red-600 font-bold">
+              <div className="text-red-600 text-xs bg-red-50 p-2 mb-4 border-l-4 border-red-600 font-bold">
                 {error}
               </div>
             )}
@@ -348,7 +347,7 @@ export const Auth: React.FC<AuthProps> = ({ isOpen, onClose, onLogin }) => {
               )}
             </button>
 
-            <div className="pt-2 border-t border-slate-100 text-center">
+            <div className="pt-2 mt-4 border-t border-slate-100 text-center">
                 <button 
                     type="button"
                     onClick={toggleMode}

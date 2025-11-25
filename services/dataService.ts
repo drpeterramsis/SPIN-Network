@@ -419,13 +419,30 @@ export const dataService = {
   },
 
   async logDelivery(delivery: Omit<Delivery, 'id'>, userName: string): Promise<void> {
+      // Resolve patient Name for transaction log
+      let patientName = delivery.patient?.full_name;
+      
+      // If patient name missing in object, try to fetch it
+      if (!patientName) {
+          if (isSupabaseConfigured() && supabase) {
+             const { data } = await supabase.from('patients').select('full_name').eq('id', delivery.patient_id).single();
+             if (data) patientName = data.full_name;
+          } else {
+             const ps = await this.getPatients();
+             const p = ps.find(x => x.id === delivery.patient_id);
+             if (p) patientName = p.full_name;
+          }
+      }
+      
+      const sourceLog = `Delivery to Patient: ${patientName || delivery.patient_id}`;
+
       // 1. First Process Stock Transaction
       if (delivery.custody_id) {
           await this.processStockTransaction(
               delivery.custody_id,
               -1,
               delivery.delivery_date,
-              `Delivery to Patient: ${delivery.patient?.full_name || delivery.patient_id}`
+              sourceLog
           );
       }
 

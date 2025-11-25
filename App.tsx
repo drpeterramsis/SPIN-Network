@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Auth } from './components/Auth';
 import { AdminPanel } from './components/AdminPanel';
@@ -43,14 +44,17 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.048",
-  version: "2.0.048"
+  name: "S.P.I.N v2.0.049",
+  version: "2.0.049"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
 type DBView = 'deliveries' | 'hcps' | 'locations' | 'stock' | 'patients';
 
 const COLORS = ['#FFC600', '#000000', '#94a3b8', '#475569', '#cbd5e1'];
+
+const HOSPITAL_TAGS = ['City General', 'Military Hospital', 'University Hospital', 'Private Clinic', 'Health Center'];
+const SPECIALTY_TAGS = ['Endocrinology', 'Internal Medicine', 'General Practice', 'Family Medicine', 'Diabetes Center'];
 
 const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
     useEffect(() => {
@@ -167,6 +171,9 @@ export const App: React.FC = () => {
   
   const [deliveryDate, setDeliveryDate] = useState(getTodayString());
   const [rxDate, setRxDate] = useState('');
+  const [educatorName, setEducatorName] = useState('');
+  const [educatorDate, setEducatorDate] = useState('');
+  
   const [educatorSuggestions, setEducatorSuggestions] = useState<string[]>([]);
   
   const [duplicateWarning, setDuplicateWarning] = useState(false);
@@ -565,7 +572,9 @@ export const App: React.FC = () => {
               delivered_by: user.id,
               delivery_date: deliveryDate,
               rx_date: rxDate || undefined,
-              custody_id: selectedCustody
+              custody_id: selectedCustody,
+              educator_name: educatorName,
+              educator_submission_date: educatorDate
           }, user.email);
           
           showToast("Delivery logged successfully", "success");
@@ -575,6 +584,8 @@ export const App: React.FC = () => {
           setFoundPatient(null);
           setHasSearched(false);
           setRxDate('');
+          setEducatorName('');
+          setEducatorDate('');
           setDuplicateWarning(false);
           await loadData();
       } catch (err: any) {
@@ -688,9 +699,15 @@ export const App: React.FC = () => {
                   name: editingItem.name
               });
           } else if (dbView === 'deliveries') {
+              // Full Edit Capability for Delivery
               await dataService.updateDelivery(editingItem.id, {
                   quantity: editingItem.quantity,
-                  delivery_date: editingItem.delivery_date
+                  delivery_date: editingItem.delivery_date,
+                  product_id: editingItem.product_id,
+                  hcp_id: editingItem.hcp_id,
+                  rx_date: editingItem.rx_date,
+                  educator_name: editingItem.educator_name,
+                  educator_submission_date: editingItem.educator_submission_date
               });
           } else if (dbView === 'stock') {
               await dataService.updateStockTransaction(editingItem.id, {
@@ -747,12 +764,12 @@ export const App: React.FC = () => {
         {/* Generic Edit Modal */}
         {showEditModal && editingItem && (
             <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full overflow-hidden">
-                    <div className="bg-black text-white p-4 font-bold flex justify-between">
+                <div className="bg-white rounded-lg shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]">
+                    <div className="bg-black text-white p-4 font-bold flex justify-between shrink-0">
                         <span>Edit Record</span>
                         <button onClick={() => setShowEditModal(false)}><X className="w-5 h-5"/></button>
                     </div>
-                    <div className="p-6 space-y-4">
+                    <div className="p-6 space-y-4 overflow-y-auto custom-scrollbar">
                         {dbView === 'patients' && (
                             <>
                                 <input className="w-full border p-2 rounded" placeholder="Name" value={editingItem.full_name} onChange={e=>setEditingItem({...editingItem, full_name: e.target.value})} />
@@ -771,12 +788,44 @@ export const App: React.FC = () => {
                              <input className="w-full border p-2 rounded" placeholder="Location Name" value={editingItem.name} onChange={e=>setEditingItem({...editingItem, name: e.target.value})} />
                         )}
                         {dbView === 'deliveries' && (
-                            <>
-                                <label className="text-xs font-bold uppercase">Quantity</label>
-                                <input type="number" className="w-full border p-2 rounded" value={editingItem.quantity} onChange={e=>setEditingItem({...editingItem, quantity: Number(e.target.value)})} />
-                                <label className="text-xs font-bold uppercase">Date</label>
-                                <input type="date" className="w-full border p-2 rounded" value={editingItem.delivery_date} onChange={e=>setEditingItem({...editingItem, delivery_date: e.target.value})} />
-                            </>
+                            <div className="space-y-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-[10px] font-bold uppercase text-slate-500">Quantity</label>
+                                        <input type="number" className="w-full border p-2 rounded" value={editingItem.quantity} onChange={e=>setEditingItem({...editingItem, quantity: Number(e.target.value)})} />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold uppercase text-slate-500">Delivery Date</label>
+                                        <input type="date" className="w-full border p-2 rounded" value={editingItem.delivery_date} onChange={e=>setEditingItem({...editingItem, delivery_date: e.target.value})} />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-slate-500">Product</label>
+                                    <select className="w-full border p-2 rounded bg-white" value={editingItem.product_id} onChange={e=>setEditingItem({...editingItem, product_id: e.target.value})}>
+                                        {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-slate-500">Prescribing HCP</label>
+                                    <select className="w-full border p-2 rounded bg-white" value={editingItem.hcp_id} onChange={e=>setEditingItem({...editingItem, hcp_id: e.target.value})}>
+                                        {hcps.map(h => <option key={h.id} value={h.id}>{h.full_name}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-slate-500">Rx Date</label>
+                                    <input type="date" className="w-full border p-2 rounded" value={editingItem.rx_date || ''} onChange={e=>setEditingItem({...editingItem, rx_date: e.target.value})} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-[10px] font-bold uppercase text-slate-500">Educator Informed</label>
+                                        <input className="w-full border p-2 rounded" value={editingItem.educator_name || ''} onChange={e=>setEditingItem({...editingItem, educator_name: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold uppercase text-slate-500">Info Date</label>
+                                        <input type="date" className="w-full border p-2 rounded" value={editingItem.educator_submission_date || ''} onChange={e=>setEditingItem({...editingItem, educator_submission_date: e.target.value})} />
+                                    </div>
+                                </div>
+                            </div>
                         )}
                         {dbView === 'stock' && (
                             <>
@@ -786,11 +835,12 @@ export const App: React.FC = () => {
                                 <input className="w-full border p-2 rounded" value={editingItem.source} onChange={e=>setEditingItem({...editingItem, source: e.target.value})} />
                             </>
                         )}
-                        
+                    </div>
+                    <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0">
                         <button 
                             onClick={handleSaveEdit} 
                             disabled={isSubmitting}
-                            className="w-full bg-[#FFC600] text-black font-bold py-3 uppercase tracking-wider hover:bg-yellow-400"
+                            className="w-full bg-[#FFC600] text-black font-bold py-3 uppercase tracking-wider hover:bg-yellow-400 rounded"
                         >
                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Save Changes'}
                         </button>
@@ -1111,6 +1161,20 @@ export const App: React.FC = () => {
                                 {/* DELIVER TAB */}
                                 {activeTab === 'deliver' && (userProfile?.role === 'mr' || userProfile?.role === 'admin') && (
                                     <div className="max-w-2xl mx-auto animate-in fade-in">
+                                         
+                                         {/* Step Indicator */}
+                                         <div className="flex items-center justify-between mb-8 px-8">
+                                            <div className={`flex flex-col items-center gap-2 z-10 ${step >= 1 ? 'opacity-100' : 'opacity-50'}`}>
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border-2 transition-all ${step >= 1 ? 'bg-black text-white border-black' : 'bg-white text-slate-300 border-slate-200'}`}>1</div>
+                                                <span className="text-[10px] font-bold uppercase tracking-widest">Identify</span>
+                                            </div>
+                                            <div className={`flex-1 h-1 mx-4 transition-all ${step >= 2 ? 'bg-black' : 'bg-slate-200'}`}></div>
+                                            <div className={`flex flex-col items-center gap-2 z-10 ${step >= 2 ? 'opacity-100' : 'opacity-50'}`}>
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border-2 transition-all ${step >= 2 ? 'bg-[#FFC600] text-black border-[#FFC600]' : 'bg-white text-slate-300 border-slate-200'}`}>2</div>
+                                                <span className="text-[10px] font-bold uppercase tracking-widest">Details</span>
+                                            </div>
+                                         </div>
+
                                          {/* Step 1: Search */}
                                          {step === 1 && (
                                              <div className="bg-white p-8 rounded-lg shadow-sm border border-slate-200 text-center">
@@ -1268,6 +1332,33 @@ export const App: React.FC = () => {
                                                                  onChange={e => setRxDate(e.target.value)}
                                                              />
                                                          </div>
+
+                                                         {/* Educator Section */}
+                                                         <div className="col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-slate-50 rounded border border-slate-100">
+                                                             <div className="space-y-2">
+                                                                 <label className="text-xs font-bold text-slate-500 uppercase">Educator Informed</label>
+                                                                 <input 
+                                                                     type="text" 
+                                                                     list="educators"
+                                                                     placeholder="Name of Educator"
+                                                                     className="w-full px-4 py-3 border border-slate-300 bg-white rounded outline-none focus:border-[#FFC600]"
+                                                                     value={educatorName}
+                                                                     onChange={e => setEducatorName(e.target.value)}
+                                                                 />
+                                                                  <datalist id="educators">
+                                                                     {educatorSuggestions.map(s => <option key={s} value={s} />)}
+                                                                 </datalist>
+                                                             </div>
+                                                             <div className="space-y-2">
+                                                                 <label className="text-xs font-bold text-slate-500 uppercase">Date of Information</label>
+                                                                 <input 
+                                                                     type="date"
+                                                                     className="w-full px-4 py-3 border border-slate-300 bg-white rounded outline-none focus:border-[#FFC600]"
+                                                                     value={educatorDate}
+                                                                     onChange={e => setEducatorDate(e.target.value)}
+                                                                 />
+                                                             </div>
+                                                         </div>
                                                      </div>
 
                                                      {/* Modal for New HCP */}
@@ -1275,10 +1366,41 @@ export const App: React.FC = () => {
                                                          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                                                              <div className="bg-white p-6 rounded-lg w-full max-w-sm border-t-4 border-[#FFC600]">
                                                                  <h4 className="font-bold text-lg mb-4">Add New Doctor</h4>
-                                                                 <div className="space-y-3">
+                                                                 <div className="space-y-4">
                                                                      <input type="text" placeholder="Dr. Name" className="w-full border p-2 rounded" value={newHCP.full_name} onChange={e => setNewHCP({...newHCP, full_name: e.target.value})} />
-                                                                     <input type="text" placeholder="Hospital/Clinic" className="w-full border p-2 rounded" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} />
-                                                                     <input type="text" placeholder="Specialty" className="w-full border p-2 rounded" value={newHCP.specialty} onChange={e => setNewHCP({...newHCP, specialty: e.target.value})} />
+                                                                     
+                                                                     <div>
+                                                                        <input type="text" placeholder="Hospital/Clinic" className="w-full border p-2 rounded mb-2" value={newHCP.hospital} onChange={e => setNewHCP({...newHCP, hospital: e.target.value})} />
+                                                                        <div className="flex flex-wrap gap-2">
+                                                                            {HOSPITAL_TAGS.map(tag => (
+                                                                                <button 
+                                                                                    key={tag}
+                                                                                    type="button"
+                                                                                    onClick={() => setNewHCP({...newHCP, hospital: tag})}
+                                                                                    className="text-[10px] bg-slate-100 hover:bg-[#FFC600] hover:text-black px-2 py-1 rounded border border-slate-200"
+                                                                                >
+                                                                                    {tag}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                     </div>
+
+                                                                     <div>
+                                                                        <input type="text" placeholder="Specialty" className="w-full border p-2 rounded mb-2" value={newHCP.specialty} onChange={e => setNewHCP({...newHCP, specialty: e.target.value})} />
+                                                                         <div className="flex flex-wrap gap-2">
+                                                                            {SPECIALTY_TAGS.map(tag => (
+                                                                                <button 
+                                                                                    key={tag}
+                                                                                    type="button"
+                                                                                    onClick={() => setNewHCP({...newHCP, specialty: tag})}
+                                                                                    className="text-[10px] bg-slate-100 hover:bg-[#FFC600] hover:text-black px-2 py-1 rounded border border-slate-200"
+                                                                                >
+                                                                                    {tag}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                     </div>
+
                                                                      <div className="flex gap-2 pt-2">
                                                                          <button onClick={() => setShowHCPModal(false)} className="flex-1 bg-slate-100 py-2 rounded font-bold">Cancel</button>
                                                                          <button onClick={handleCreateHCP} className="flex-1 bg-black text-white py-2 rounded font-bold">Save</button>
@@ -1554,11 +1676,16 @@ export const App: React.FC = () => {
                                                      <tr>
                                                          {dbView === 'deliveries' && (
                                                              <>
-                                                                 <th className="px-6 py-3">Date</th>
-                                                                 <th className="px-6 py-3">Patient</th>
-                                                                 <th className="px-6 py-3">Product</th>
-                                                                 <th className="px-6 py-3">Qty</th>
-                                                                 <th className="px-6 py-3">Prescriber</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Date</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Patient</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">National ID</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Phone</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Product</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Qty</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Prescriber</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Rx Date</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Educator</th>
+                                                                 <th className="px-6 py-3 whitespace-nowrap">Info Date</th>
                                                                  {/* Hierarchical Columns */}
                                                                  {(userProfile.role === 'dm' || userProfile.role === 'lm') && <th className="px-6 py-3">Medical Rep</th>}
                                                                  {userProfile.role === 'lm' && <th className="px-6 py-3">District Mgr</th>}
@@ -1615,11 +1742,16 @@ export const App: React.FC = () => {
                                                              const ctx = getUserContext(d.delivered_by);
                                                              return (
                                                                  <tr key={d.id} className="hover:bg-slate-50">
-                                                                     <td className="px-6 py-3 font-mono text-xs">{formatDateFriendly(d.delivery_date)}</td>
-                                                                     <td className="px-6 py-3 font-bold">{d.patient?.full_name}</td>
-                                                                     <td className="px-6 py-3">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
-                                                                     <td className="px-6 py-3 font-bold">{d.quantity}</td>
-                                                                     <td className="px-6 py-3 text-slate-500">{d.hcp?.full_name}</td>
+                                                                     <td className="px-6 py-3 font-mono text-xs whitespace-nowrap">{formatDateFriendly(d.delivery_date)}</td>
+                                                                     <td className="px-6 py-3 font-bold whitespace-nowrap">{d.patient?.full_name}</td>
+                                                                     <td className="px-6 py-3 text-xs font-mono text-slate-500 whitespace-nowrap">{d.patient?.national_id}</td>
+                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.patient?.phone_number}</td>
+                                                                     <td className="px-6 py-3 whitespace-nowrap">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
+                                                                     <td className="px-6 py-3 font-bold whitespace-nowrap">{d.quantity}</td>
+                                                                     <td className="px-6 py-3 text-slate-500 whitespace-nowrap">{d.hcp?.full_name}</td>
+                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.rx_date ? formatDateFriendly(d.rx_date) : '-'}</td>
+                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.educator_name || '-'}</td>
+                                                                     <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{d.educator_submission_date ? formatDateFriendly(d.educator_submission_date) : '-'}</td>
                                                                      {(userProfile.role === 'dm' || userProfile.role === 'lm') && <td className="px-6 py-3 text-blue-600 font-medium text-xs">{ctx.mr}</td>}
                                                                      {userProfile.role === 'lm' && <td className="px-6 py-3 text-purple-600 font-medium text-xs">{ctx.dm}</td>}
                                                                      {(userProfile.role === 'mr' || userProfile.role === 'admin') && (
