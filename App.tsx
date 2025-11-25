@@ -43,8 +43,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.045",
-  version: "2.0.045"
+  name: "S.P.I.N v2.0.048",
+  version: "2.0.048"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -354,7 +354,7 @@ export const App: React.FC = () => {
         let flattenedMrs: any[] = [];
         
         myDms.forEach(dm => {
-            const teamMrs = allProfiles.filter(p => p.manager_id === dm.id && p.role === 'mr');
+            const teamMrs = allProfiles.filter(p => p.manager_id && p.manager_id === dm.id && p.role === 'mr');
             const mrData = teamMrs.map(mr => {
                 const c = custodies.find(item => item.owner_id === mr.id && item.type === 'rep');
                 return {
@@ -514,7 +514,12 @@ export const App: React.FC = () => {
           setNewLocationType('clinic');
           showToast("New location created", "success");
       } catch (e: any) {
-          showToast(e.message, "error");
+          console.error(e);
+          if (e.message && e.message.includes('custodies_type_check')) {
+              showToast("Database Error: Type 'pharmacy' not allowed. Please run the provided db_update.sql script.", "error");
+          } else {
+              showToast(e.message, "error");
+          }
       } finally {
           setIsSubmitting(false);
       }
