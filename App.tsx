@@ -43,8 +43,8 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const METADATA = {
-  name: "S.P.I.N v2.0.051",
-  version: "2.0.051"
+  name: "S.P.I.N v2.0.052",
+  version: "2.0.052"
 };
 
 type Tab = 'dashboard' | 'deliver' | 'custody' | 'database' | 'admin' | 'analytics';
@@ -93,7 +93,7 @@ const LandingPage = ({ onLogin }: { onLogin: () => void }) => (
     </div>
 
     {/* Features */}
-    <div className="max-w-7xl mx-auto py-16 px-4 grid grid-cols-1 md:grid-cols-3 gap-8">
+    <div className="max-w-7xl mx-auto py-16 px-4 grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
        <div className="p-8 border border-slate-100 rounded-xl shadow-sm hover:shadow-md transition-shadow">
           <div className="w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center mb-4"><Syringe className="w-6 h-6 text-blue-600"/></div>
           <h3 className="text-xl font-bold mb-2">Smart Inventory</h3>
@@ -115,16 +115,16 @@ const LandingPage = ({ onLogin }: { onLogin: () => void }) => (
   </div>
 );
 
-// Footer Component
+// Footer Component (Updated)
 const Footer = () => (
-  <footer className="bg-slate-900 text-slate-400 py-4 px-4 border-t border-slate-800 shrink-0 z-10 w-full">
-     <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-2">
+  <footer className="fixed bottom-0 left-0 w-full bg-slate-900 text-slate-400 py-1.5 px-4 border-t border-slate-800 z-50 text-[10px] font-medium backdrop-blur-sm bg-slate-900/95">
+     <div className="max-w-7xl mx-auto flex justify-between items-center">
         <div className="flex items-center gap-2">
-            <span className="text-lg">🖊️</span>
+            <span>🖊️</span>
             <span className="font-bold text-white tracking-wider">S.P.I.N</span>
-            <span className="text-xs bg-slate-800 px-2 py-0.5 rounded text-[#FFC600]">v{METADATA.version}</span>
+            <span className="bg-slate-800 px-1.5 py-0.5 rounded text-[#FFC600] text-[9px]">v{METADATA.version}</span>
         </div>
-        <div className="text-[10px] text-center md:text-right">
+        <div className="text-right opacity-60">
             <p>&copy; {new Date().getFullYear()} Supply Insulin Pen Network.</p>
         </div>
      </div>
@@ -153,6 +153,7 @@ export const App: React.FC = () => {
   // Database Filters
   const [dbFilterDm, setDbFilterDm] = useState('all');
   const [dbFilterMr, setDbFilterMr] = useState('all');
+  const [dbSearchTerm, setDbSearchTerm] = useState('');
 
   const [showProfileModal, setShowProfileModal] = useState(false);
   
@@ -160,8 +161,6 @@ export const App: React.FC = () => {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   
-  const [searchTerm, setSearchTerm] = useState('');
-
   const [step, setStep] = useState(1);
   const [nidSearch, setNidSearch] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
@@ -324,21 +323,6 @@ export const App: React.FC = () => {
     return repCustody?.current_stock || 0;
   }, [repCustody]);
 
-  // Helper to get hierarchy info
-  const getUserContext = useCallback((userId: string) => {
-      const prof = allProfiles.find(p => p.id === userId);
-      if (!prof) return { mr: 'Unknown', dm: '-', lm: '-' };
-      
-      const dm = allProfiles.find(p => p.id === prof.manager_id);
-      const lm = dm ? allProfiles.find(p => p.id === dm.manager_id) : null;
-      
-      return {
-          mr: prof.full_name,
-          dm: dm?.full_name || '-',
-          lm: lm?.full_name || '-'
-      };
-  }, [allProfiles]);
-
   // DB Filter Lists
   const dbDms = useMemo(() => {
       if (userProfile?.role === 'lm') {
@@ -381,7 +365,6 @@ export const App: React.FC = () => {
     }
 
     if (userProfile.role === 'lm') {
-        // Flattened view: All MRs under my DMs
         const myDms = allProfiles.filter(p => p.manager_id === user.id && p.role === 'dm');
         let flattenedMrs: any[] = [];
         
@@ -401,7 +384,6 @@ export const App: React.FC = () => {
         });
 
         return flattenedMrs.sort((a, b) => {
-            // Sort by Manager Name then Stock
             if (a.manager_name < b.manager_name) return -1;
             if (a.manager_name > b.manager_name) return 1;
             return b.stock - a.stock;
@@ -434,23 +416,91 @@ export const App: React.FC = () => {
 
   const visibleDeliveries = getVisibleDeliveries();
   
-  // Filtered Deliveries for Database View
-  const filteredDbDeliveries = useMemo(() => {
-      let data = visibleDeliveries;
-      
-      if (activeTab === 'database' && dbView === 'deliveries') {
-          if (dbFilterDm !== 'all' && userProfile?.role === 'lm') {
-              data = data.filter(d => {
-                  const owner = allProfiles.find(p => p.id === d.delivered_by);
-                  return owner?.manager_id === dbFilterDm;
-              });
-          }
-          if (dbFilterMr !== 'all' && (userProfile?.role === 'dm' || userProfile?.role === 'lm')) {
-              data = data.filter(d => d.delivered_by === dbFilterMr);
-          }
+  // Helper to resolve hierarchy for any record based on Owner ID
+  const getHierarchyForRecord = (ownerId?: string) => {
+     if (!ownerId) return { mr: '-', dm: '-' };
+     const owner = allProfiles.find(p => p.id === ownerId);
+     if (!owner) return { mr: 'Unknown', dm: '-' };
+     
+     // If owner is MR, get their DM
+     if (owner.role === 'mr') {
+         const dm = allProfiles.find(p => p.id === owner.manager_id);
+         return { mr: owner.full_name, dm: dm?.full_name || '-' };
+     }
+     if (owner.role === 'dm') {
+         return { mr: '-', dm: owner.full_name };
+     }
+     return { mr: owner.full_name, dm: '-' };
+  };
+
+  // --- UNIFIED DATABASE FILTER LOGIC ---
+  const filteredDbData = useMemo(() => {
+      let data: any[] = [];
+      let ownerKey = '';
+
+      // 1. Select Data Source
+      if (dbView === 'deliveries') {
+          data = visibleDeliveries; // Use visible set (permissions applied)
+          ownerKey = 'delivered_by';
+      } else if (dbView === 'hcps') {
+          data = hcps;
+          ownerKey = 'created_by';
+      } else if (dbView === 'patients') {
+          data = patients;
+          ownerKey = 'created_by';
+      } else if (dbView === 'locations') {
+          data = custodies;
+          ownerKey = 'owner_id';
+      } else if (dbView === 'stock') {
+          // Join with custody to get owner
+          data = stockTransactions.map(t => {
+              const c = custodies.find(c => c.id === t.custody_id);
+              return { ...t, owner_id: c?.owner_id, custody_name: c?.name };
+          });
+          ownerKey = 'owner_id';
       }
+
+      // 2. Hierarchy Filters (Apply to all views if user is Manager)
+      if (userProfile?.role === 'lm' || userProfile?.role === 'dm') {
+          data = data.filter(item => {
+              const ownerId = item[ownerKey];
+              // If record has no owner (e.g. orphan data), show it? Default yes.
+              if (!ownerId) return true; 
+
+              const owner = allProfiles.find(p => p.id === ownerId);
+              if (!owner) return true;
+
+              // LM: Filter by DM selection
+              if (userProfile.role === 'lm' && dbFilterDm !== 'all') {
+                  // If owner is MR, check if their manager is selected DM
+                  if (owner.role === 'mr' && owner.manager_id !== dbFilterDm) return false;
+                  // If owner is DM, check if they are the selected DM
+                  if (owner.role === 'dm' && owner.id !== dbFilterDm) return false;
+              }
+
+              // DM/LM: Filter by MR selection
+              if (dbFilterMr !== 'all') {
+                  if (owner.id !== dbFilterMr) return false;
+              }
+
+              return true;
+          });
+      }
+
+      // 3. Search Filter (Global Search within View)
+      if (dbSearchTerm) {
+          const lower = dbSearchTerm.toLowerCase();
+          data = data.filter(item => {
+              // Deep search in object values
+              return Object.values(item).some(val => 
+                  val !== null && val !== undefined && String(val).toLowerCase().includes(lower)
+              );
+          });
+      }
+      
       return data;
-  }, [visibleDeliveries, dbFilterDm, dbFilterMr, activeTab, dbView, userProfile, allProfiles]);
+  }, [visibleDeliveries, hcps, patients, custodies, stockTransactions, dbView, userProfile, dbFilterDm, dbFilterMr, dbSearchTerm, allProfiles]);
+
 
   const uniquePrescribersCount = useMemo(() => {
       return new Set(visibleDeliveries.map(d => d.hcp_id)).size;
@@ -966,7 +1016,7 @@ export const App: React.FC = () => {
         )}
 
         {!user ? (
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto pb-12">
                 <LandingPage onLogin={() => setShowLoginModal(true)} />
             </div>
         ) : (
@@ -1008,7 +1058,7 @@ export const App: React.FC = () => {
             </header>
 
             {/* Main Content Area */}
-            <main className="flex-1 overflow-hidden flex flex-col relative">
+            <main className="flex-1 overflow-hidden flex flex-col relative pb-12">
                 
                 {activeTab === 'analytics' && (
                     <div className="absolute inset-0 z-40 bg-slate-100 overflow-y-auto">
@@ -1619,8 +1669,8 @@ export const App: React.FC = () => {
                                 {/* DATABASE TAB */}
                                 {activeTab === 'database' && (
                                     <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
-                                        <div className="bg-slate-50 border-b border-slate-200 p-2 overflow-x-auto flex gap-2 items-center justify-between">
-                                            <div className="flex gap-2">
+                                        <div className="bg-slate-50 border-b border-slate-200 p-2 flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+                                            <div className="flex gap-2 overflow-x-auto pb-1 md:pb-0 w-full md:w-auto">
                                                 {[
                                                     { id: 'deliveries', label: 'Deliveries' },
                                                     { id: 'hcps', label: 'Doctors' },
@@ -1630,7 +1680,7 @@ export const App: React.FC = () => {
                                                 ].map(view => (
                                                     <button
                                                         key={view.id}
-                                                        onClick={() => setDbView(view.id as DBView)}
+                                                        onClick={() => { setDbView(view.id as DBView); setDbSearchTerm(''); }}
                                                         className={`px-4 py-2 rounded text-xs font-bold uppercase transition-colors whitespace-nowrap ${dbView === view.id ? 'bg-black text-white' : 'text-slate-500 hover:bg-slate-200'}`}
                                                     >
                                                         {view.label}
@@ -1638,38 +1688,60 @@ export const App: React.FC = () => {
                                                 ))}
                                             </div>
                                             
-                                            {/* Hierarchy Filters for Managers */}
-                                            {dbView === 'deliveries' && (userProfile?.role === 'lm' || userProfile?.role === 'dm') && (
-                                                <div className="flex gap-2 items-center">
-                                                    <Filter className="w-4 h-4 text-slate-400" />
-                                                    
-                                                    {userProfile.role === 'lm' && (
-                                                        <select 
-                                                            value={dbFilterDm} 
-                                                            onChange={(e) => { setDbFilterDm(e.target.value); setDbFilterMr('all'); }}
-                                                            className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
-                                                        >
-                                                            <option value="all">All DMs</option>
-                                                            {dbDms.map(dm => <option key={dm.id} value={dm.id}>{dm.full_name}</option>)}
-                                                        </select>
-                                                    )}
-
-                                                    <select 
-                                                        value={dbFilterMr} 
-                                                        onChange={(e) => setDbFilterMr(e.target.value)}
-                                                        className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
-                                                    >
-                                                        <option value="all">All MRs</option>
-                                                        {dbMrs.map(mr => <option key={mr.id} value={mr.id}>{mr.full_name}</option>)}
-                                                    </select>
+                                            <div className="flex gap-2 w-full md:w-auto flex-wrap">
+                                                 {/* Universal Search */}
+                                                <div className="relative flex-1 md:w-48">
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Search..." 
+                                                        value={dbSearchTerm}
+                                                        onChange={(e) => setDbSearchTerm(e.target.value)}
+                                                        className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded text-xs outline-none focus:border-[#FFC600]"
+                                                    />
+                                                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                                                 </div>
-                                            )}
+
+                                                {/* Hierarchy Filters for Managers (All Views) */}
+                                                {(userProfile?.role === 'lm' || userProfile?.role === 'dm') && (
+                                                    <div className="flex gap-2 items-center border-l border-slate-300 pl-2">
+                                                        <Filter className="w-4 h-4 text-slate-400 hidden md:block" />
+                                                        
+                                                        {userProfile.role === 'lm' && (
+                                                            <select 
+                                                                value={dbFilterDm} 
+                                                                onChange={(e) => { setDbFilterDm(e.target.value); setDbFilterMr('all'); }}
+                                                                className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white outline-none"
+                                                            >
+                                                                <option value="all">All DMs</option>
+                                                                {dbDms.map(dm => <option key={dm.id} value={dm.id}>{dm.full_name}</option>)}
+                                                            </select>
+                                                        )}
+
+                                                        <select 
+                                                            value={dbFilterMr} 
+                                                            onChange={(e) => setDbFilterMr(e.target.value)}
+                                                            className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white outline-none"
+                                                        >
+                                                            <option value="all">All MRs</option>
+                                                            {dbMrs.map(mr => <option key={mr.id} value={mr.id}>{mr.full_name}</option>)}
+                                                        </select>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
 
                                         <div className="overflow-x-auto">
-                                            <table className="w-full text-left min-w-[800px]">
+                                            <table className="w-full text-left min-w-[1000px]">
                                                 <thead className="bg-white border-b border-slate-200 text-[10px] font-bold uppercase text-slate-400">
                                                     <tr>
+                                                        {/* Dynamic Hierarchy Columns for Managers/Admins */}
+                                                        {(userProfile?.role !== 'mr') && (
+                                                            <>
+                                                                <th className="px-4 py-4 w-24">Rep</th>
+                                                                <th className="px-4 py-4 w-24">Manager</th>
+                                                            </>
+                                                        )}
+
                                                         {dbView === 'deliveries' && (
                                                             <>
                                                                 <th className="px-4 py-4">Date</th>
@@ -1712,7 +1784,7 @@ export const App: React.FC = () => {
                                                         {dbView === 'stock' && (
                                                             <>
                                                                 <th className="px-6 py-4">Date</th>
-                                                                <th className="px-6 py-4">Location</th>
+                                                                <th className="px-6 py-4">Custody</th>
                                                                 <th className="px-6 py-4">Change</th>
                                                                 <th className="px-6 py-4">Source/Note</th>
                                                                 <th className="px-6 py-4 text-right">Actions</th>
@@ -1721,77 +1793,95 @@ export const App: React.FC = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100 text-sm">
-                                                    {dbView === 'deliveries' && filteredDbDeliveries.map(d => (
-                                                        <tr key={d.id} className="hover:bg-slate-50">
-                                                            <td className="px-4 py-4 text-slate-500 font-mono text-xs whitespace-nowrap">{formatDateFriendly(d.delivery_date)}</td>
-                                                            <td className="px-4 py-4 font-bold">{d.patient?.full_name}</td>
-                                                            <td className="px-4 py-4">{d.hcp?.full_name}</td>
-                                                            <td className="px-4 py-4 text-slate-600 text-xs">{d.custody?.name || 'Unknown'}</td>
-                                                            <td className="px-4 py-4 font-bold">{d.quantity}</td>
-                                                            <td className="px-4 py-4 text-xs uppercase">{PRODUCTS.find(p=>p.id===d.product_id)?.name}</td>
-                                                            
-                                                            {/* New Data Columns */}
-                                                            <td className="px-4 py-4 text-xs text-slate-500 whitespace-nowrap">{d.rx_date ? formatDateFriendly(d.rx_date) : '-'}</td>
-                                                            <td className="px-4 py-4 text-xs text-slate-500">{d.educator_name || '-'}</td>
-                                                            <td className="px-4 py-4 text-xs text-slate-500 whitespace-nowrap">{d.educator_submission_date ? formatDateFriendly(d.educator_submission_date) : '-'}</td>
-                                                            
-                                                            <td className="px-4 py-4 text-right flex justify-end gap-2">
-                                                                <button onClick={() => openEditModal(d, 'deliveries')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
-                                                                <button onClick={() => handleDeleteItem('deliveries', d.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                            </td>
+                                                    {filteredDbData.map((item: any) => {
+                                                        const hierarchy = getHierarchyForRecord(item.owner_id || item.created_by || item.delivered_by);
+                                                        return (
+                                                        <tr key={item.id} className="hover:bg-slate-50">
+                                                            {/* Hierarchy Cells */}
+                                                            {(userProfile?.role !== 'mr') && (
+                                                                <>
+                                                                    <td className="px-4 py-4 text-xs font-bold text-slate-700">{hierarchy.mr}</td>
+                                                                    <td className="px-4 py-4 text-xs text-slate-500">{hierarchy.dm}</td>
+                                                                </>
+                                                            )}
+
+                                                            {dbView === 'deliveries' && (
+                                                                <>
+                                                                    <td className="px-4 py-4 text-slate-500 font-mono text-xs whitespace-nowrap">{formatDateFriendly(item.delivery_date)}</td>
+                                                                    <td className="px-4 py-4 font-bold">{item.patient?.full_name}</td>
+                                                                    <td className="px-4 py-4">{item.hcp?.full_name}</td>
+                                                                    <td className="px-4 py-4 text-slate-600 text-xs">{item.custody?.name || 'Unknown'}</td>
+                                                                    <td className="px-4 py-4 font-bold">{item.quantity}</td>
+                                                                    <td className="px-4 py-4 text-xs uppercase">{PRODUCTS.find((p: any)=>p.id===item.product_id)?.name}</td>
+                                                                    <td className="px-4 py-4 text-xs text-slate-500 whitespace-nowrap">{item.rx_date ? formatDateFriendly(item.rx_date) : '-'}</td>
+                                                                    <td className="px-4 py-4 text-xs text-slate-500">{item.educator_name || '-'}</td>
+                                                                    <td className="px-4 py-4 text-xs text-slate-500 whitespace-nowrap">{item.educator_submission_date ? formatDateFriendly(item.educator_submission_date) : '-'}</td>
+                                                                    <td className="px-4 py-4 text-right flex justify-end gap-2">
+                                                                        <button onClick={() => openEditModal(item, 'deliveries')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                        <button onClick={() => handleDeleteItem('deliveries', item.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                    </td>
+                                                                </>
+                                                            )}
+
+                                                            {dbView === 'hcps' && (
+                                                                <>
+                                                                    <td className="px-6 py-4 font-bold">{item.full_name}</td>
+                                                                    <td className="px-6 py-4">{item.hospital}</td>
+                                                                    <td className="px-6 py-4">
+                                                                        <span className="text-xs bg-slate-100 rounded px-2 py-1 font-medium border border-slate-200 text-slate-600">
+                                                                            {item.specialty}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                        <button onClick={() => openEditModal(item, 'hcps')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                        <button onClick={() => handleDeleteItem('hcps', item.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                    </td>
+                                                                </>
+                                                            )}
+
+                                                            {dbView === 'patients' && (
+                                                                <>
+                                                                    <td className="px-6 py-4 font-bold">{item.full_name}</td>
+                                                                    <td className="px-6 py-4 font-mono text-xs">{item.national_id}</td>
+                                                                    <td className="px-6 py-4 text-slate-500">{item.phone_number}</td>
+                                                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                        <button onClick={() => openEditModal(item, 'patients')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                        <button onClick={() => handleDeleteItem('patients', item.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                    </td>
+                                                                </>
+                                                            )}
+
+                                                            {dbView === 'locations' && (
+                                                                <>
+                                                                    <td className="px-6 py-4 font-bold">{item.name}</td>
+                                                                    <td className="px-6 py-4 text-xs uppercase text-slate-500">{item.type}</td>
+                                                                    <td className="px-6 py-4 text-right font-mono font-bold">{item.current_stock}</td>
+                                                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                        <button onClick={() => openEditModal(item, 'locations')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                        <button onClick={() => handleDeleteItem('locations', item.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                    </td>
+                                                                </>
+                                                            )}
+
+                                                            {dbView === 'stock' && (
+                                                                <>
+                                                                    <td className="px-6 py-4 font-mono text-xs text-slate-500">{formatDateFriendly(item.transaction_date)}</td>
+                                                                    <td className="px-6 py-4 font-bold text-xs">{item.custody_name || 'Unknown'}</td>
+                                                                    <td className={`px-6 py-4 font-bold ${item.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{item.quantity > 0 ? '+' : ''}{item.quantity}</td>
+                                                                    <td className="px-6 py-4 text-xs text-slate-600">{item.source}</td>
+                                                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                                        <button onClick={() => openEditModal(item, 'stock')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
+                                                                        <button onClick={() => handleDeleteItem('stock', item.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                                    </td>
+                                                                </>
+                                                            )}
                                                         </tr>
-                                                    ))}
-                                                    {dbView === 'hcps' && hcps.map(h => (
-                                                        <tr key={h.id} className="hover:bg-slate-50">
-                                                            <td className="px-6 py-4 font-bold">{h.full_name}</td>
-                                                            <td className="px-6 py-4">{h.hospital}</td>
-                                                            <td className="px-6 py-4">
-                                                                <span className="text-xs bg-slate-100 rounded px-2 py-1 font-medium border border-slate-200 text-slate-600">
-                                                                    {h.specialty}
-                                                                </span>
-                                                            </td>
-                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                                                <button onClick={() => openEditModal(h, 'hcps')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
-                                                                <button onClick={() => handleDeleteItem('hcps', h.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                    {dbView === 'patients' && patients.map(p => (
-                                                        <tr key={p.id} className="hover:bg-slate-50">
-                                                            <td className="px-6 py-4 font-bold">{p.full_name}</td>
-                                                            <td className="px-6 py-4 font-mono text-xs">{p.national_id}</td>
-                                                            <td className="px-6 py-4 text-slate-500">{p.phone_number}</td>
-                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                                                <button onClick={() => openEditModal(p, 'patients')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
-                                                                <button onClick={() => handleDeleteItem('patients', p.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                    {dbView === 'locations' && custodies.map(c => (
-                                                        <tr key={c.id} className="hover:bg-slate-50">
-                                                            <td className="px-6 py-4 font-bold">{c.name}</td>
-                                                            <td className="px-6 py-4 text-xs uppercase text-slate-500">{c.type}</td>
-                                                            <td className="px-6 py-4 text-right font-mono font-bold">{c.current_stock}</td>
-                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                                                <button onClick={() => openEditModal(c, 'locations')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
-                                                                <button onClick={() => handleDeleteItem('locations', c.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                    {dbView === 'stock' && stockTransactions.slice(0, 50).map(t => (
-                                                        <tr key={t.id} className="hover:bg-slate-50">
-                                                            <td className="px-6 py-4 font-mono text-xs text-slate-500">{formatDateFriendly(t.transaction_date)}</td>
-                                                            <td className="px-6 py-4 font-bold text-xs">{custodies.find(c=>c.id===t.custody_id)?.name}</td>
-                                                            <td className={`px-6 py-4 font-bold ${t.quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>{t.quantity > 0 ? '+' : ''}{t.quantity}</td>
-                                                            <td className="px-6 py-4 text-xs text-slate-600">{t.source}</td>
-                                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                                                <button onClick={() => openEditModal(t, 'stock')} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4"/></button>
-                                                                <button onClick={() => handleDeleteItem('stock', t.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
+                                                    )})}
                                                 </tbody>
                                             </table>
+                                            {filteredDbData.length === 0 && (
+                                                <div className="p-8 text-center text-slate-400 text-xs uppercase">No records found matching filters.</div>
+                                            )}
                                         </div>
                                     </div>
                                 )}
